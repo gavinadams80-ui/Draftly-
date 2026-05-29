@@ -1,10 +1,1098 @@
-import { Routes, Route } from 'react-router'
-import Home from './pages/Home'
+import { useState, useMemo, useCallback } from 'react';
+import type {
+  ProjectConfig, MemberForms, MemberOverrides, MemberForm,
+  ConstructionType, BuildingType, RoofType, AttachmentType,
+  UtilResult,
+} from '@/types';
+import {
+  getSectionDB,
+} from '@/lib/sections';
+import {
+  calcUtilisation, filterByForm,
+  lightestPassing, getAvailableForms, getBracingFactor,
+  BUILDING_TYPES, MATERIAL_LABELS, STANDARDS,
+  ROOFING_PROFILES, getRoofingProfile,
+  CLADDING_TYPES, calcGableInfill,
+  getConnectionsForMember,
+} from '@/lib/engine';
+import { generateThreeViewSVG, generateGableInfillSVG } from '@/lib/drawings';
+import { generateBuildingPlanSVG, generateRoofGeometrySVG } from '@/lib/planDrawings';
+import { generateCornerPostSVG, generateRafterLedgerSVG, generateCrossBracingSVG } from '@/lib/connectionDrawings';
+import { generateSocketJointSVG, generateFasciaPenetrationSVG } from '@/lib/socketJointDrawing';
+import { generateWallSectionSVG } from '@/lib/wallSection';
+import { generateFullElevationSVG } from '@/lib/fullElevation';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import './App.css';
 
-export default function App() {
+// ── Default state ──
+const DEFAULT_CONFIG: ProjectConfig = {
+  buildingType: 'pergola',
+  constructionType: 'csection',
+  attachment: 'three-side',
+  roofType: 'gable',
+  width: 9.27,
+  depth: 5.77,
+  height: 3.5,
+  pitch: 10,
+  portalFrameCount: 3,
+};
+
+const DEFAULT_FORMS: MemberForms = {
+  post: 'open',
+  beam: 'open',
+  purlin: 'open',
+  ledger: 'open',
+  fascia: 'open',
+  gableChord: 'open',
+  gableDropper: 'open',
+};
+
+const DEFAULT_OVERRIDES: MemberOverrides = {
+  post: null,
+  beam: null,
+  purlin: null,
+  ledger: null,
+  fascia: null,
+  gableChord: null,
+  gableDropper: null,
+};
+
+// ── Status badge helper ──
+function StatusBadge({ util }: { util: number }) {
+  const status = util < 70 ? 'PASS' : util < 85 ? 'PASS' : util < 100 ? 'MARGINAL' : 'FAIL';
+  const color = util < 70 ? '#4caf50' : util < 85 ? '#8bc34a' : util < 100 ? '#ff9800' : '#f44336';
+  const bg = util < 70 ? 'rgba(76,175,80,0.12)' : util < 85 ? 'rgba(139,195,26,0.12)' : util < 100 ? 'rgba(255,152,0,0.12)' : 'rgba(244,67,54,0.12)';
   return (
-    <Routes>
-      <Route path="/" element={<Home />} />
-    </Routes>
-  )
+    <span style={{
+      fontSize: '10px', fontFamily: 'var(--mono)', fontWeight: 700, color,
+      background: bg, padding: '2px 8px', borderRadius: '4px', letterSpacing: '0.04em',
+    }}>
+      {status} {util.toFixed(1)}%
+    </span>
+  );
+}
+
+// ── Member Card ──
+function MemberCard({
+  label, icon, result, dropdown, onFormChange, availableForms, currentForm,
+}: {
+  label: string;
+  icon: string;
+  result: UtilResult | null;
+  dropdown: React.ReactNode;
+  onFormChange: (form: string) => void;
+  availableForms: { value: string; label: string }[];
+  currentForm: string;
+}) {
+  if (!result) {
+    return (
+      <Card style={{ background: 'var(--surface2)', borderColor: 'var(--border2)' }}>
+        <CardContent className="p-3">
+          <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'var(--mono)' }}>
+            {icon} {label}
+          </div>
+          <div style={{ color: '#f44336', fontSize: '12px', marginTop: 4 }}>No sections available</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const u = result.util;
+  // Prominent colour coding: green < 70%, light-green 70-85%, amber 85-100%, red > 100%
+  const bg       = u < 70 ? 'rgba(76,175,80,0.14)' : u < 85 ? 'rgba(139,195,26,0.12)' : u < 100 ? 'rgba(255,152,0,0.10)' : 'rgba(244,67,54,0.10)';
+  const borderCol = u < 70 ? 'rgba(76,175,80,0.55)' : u < 85 ? 'rgba(139,195,26,0.50)' : u < 100 ? 'rgba(255,152,0,0.55)' : 'rgba(244,67,54,0.55)';
+  const svgBg    = u < 70 ? 'rgba(76,175,80,0.06)' : u < 85 ? 'rgba(139,195,26,0.05)' : u < 100 ? 'rgba(255,152,0,0.05)' : 'rgba(244,67,54,0.05)';
+  const statusColor = u < 70 ? '#4caf50' : u < 85 ? '#8bc34a' : u < 100 ? '#ff9800' : '#f44336';
+
+  const svgHtml = result.sec ? generateThreeViewSVG(result.sec, statusColor, currentForm as MemberForm) : '';
+
+  return (
+    <Card style={{ background: bg, border: `1.5px solid ${borderCol}` }}>
+      <CardContent className="p-3">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+          <span style={{ fontSize: '14px' }}>{icon}</span>
+          <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase', flex: 1 }}>
+            {label}
+          </span>
+          <StatusBadge util={u} />
+        </div>
+
+        <div style={{ background: svgBg, borderRadius: '4px', padding: '4px', marginBottom: 8, border: `1px solid ${borderCol}` }}>
+          <div dangerouslySetInnerHTML={{ __html: svgHtml }} />
+        </div>
+
+        <div style={{ fontSize: '13px', fontFamily: 'var(--mono)', color: 'var(--text)', fontWeight: 600, marginBottom: 2 }}>
+          {result.sec.size}
+        </div>
+        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: 6 }}>
+          {result.sec.grade} · {result.sec.wt} kg/m
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: '10px', fontFamily: 'var(--mono)', marginBottom: 8 }}>
+          <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+            M <span style={{ color: 'var(--text)' }}>{result.M.toFixed(2)}</span> kNm
+          </div>
+          <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+            M&#x03C6; <span style={{ color: statusColor }}>{result.MCap.toFixed(2)}</span> kNm
+          </div>
+          <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+            &#x03B4; <span style={{ color: 'var(--text)' }}>{result.delta.toFixed(1)}</span> mm
+          </div>
+          <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+            &#x03B4;max <span style={{ color: 'var(--text)' }}>{result.deltaMax.toFixed(1)}</span> mm
+          </div>
+        </div>
+
+        {/* Member Form selector */}
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'var(--mono)', display: 'block', marginBottom: 3 }}>
+            Member form
+          </label>
+          <select
+            value={currentForm}
+            onChange={(e) => onFormChange(e.target.value)}
+            style={{
+              width: '100%', padding: '6px 8px', background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: '4px', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '11px', cursor: 'pointer',
+            }}
+          >
+            {availableForms.map((f) => (
+              <option key={f.value} value={f.value}>{f.label}</option>
+            ))}
+          </select>
+        </div>
+
+        {dropdown}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Main App ──
+export default function App() {
+  const [config, setConfig] = useState<ProjectConfig>(DEFAULT_CONFIG);
+  const [forms, setForms] = useState<MemberForms>(DEFAULT_FORMS);
+  const [overrides, setOverrides] = useState<MemberOverrides>(DEFAULT_OVERRIDES);
+  const [selectedProfile, setSelectedProfile] = useState('trimdek-42');
+  const [showAllPassing, setShowAllPassing] = useState(false);
+  const [activeTab, setActiveTab] = useState('structure');
+  const [selectedCladding, setSelectedCladding] = useState('poly-twin-10');
+  const [standoff, setStandoff] = useState(150); // mm — standoff from brick wall
+
+  const updateConfig = useCallback((patch: Partial<ProjectConfig>) => {
+    setConfig((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const updateForm = useCallback((member: keyof MemberForms | string, form: string) => {
+    setForms((prev) => ({ ...prev, [member]: form }));
+  }, []);
+
+  const setOverride = useCallback((member: keyof MemberOverrides, size: string | null) => {
+    setOverrides((prev) => ({ ...prev, [member]: size }));
+  }, []);
+
+  const resetOverrides = useCallback(() => {
+    setOverrides(DEFAULT_OVERRIDES);
+  }, []);
+
+  // ── Engineering calculations ──
+  const calc = useMemo(() => {
+    const sections = getSectionDB(config.constructionType);
+    const bracingFactor = getBracingFactor(config.attachment);
+    const effectiveSpan = config.width * Math.sqrt(bracingFactor);
+    const postSpan = config.attachment === 'three-side' ? config.width * 0.25 : effectiveSpan;
+
+    const profile = getRoofingProfile(selectedProfile);
+    const purlinSpacing = profile.internalSpan / 1000;
+
+    const frameSpacing = config.depth / (config.portalFrameCount - 1);
+    const phi = config.constructionType === 'timber' ? 0.85 : config.constructionType === 'aluminium' ? 0.65 : 0.90;
+
+    // ── POST (column) ──
+    const postFiltered = filterByForm(sections.posts, forms.post);
+    const postResults = calcUtilisation(
+      postFiltered.length ? postFiltered : sections.posts,
+      config.height, 1.5, config.constructionType,
+      { memberForm: forms.post }
+    );
+    let selPost = overrides.post ? postResults.find((r) => r.sec.size === overrides.post) || null : null;
+    if (!selPost) selPost = lightestPassing(postResults);
+
+    // ── BEAM (rafter) ── uses FULL clearSpan
+    const beamFiltered = filterByForm(sections.beams || sections.rafters, forms.beam);
+    const beamResults = calcUtilisation(
+      beamFiltered.length ? beamFiltered : sections.beams || sections.rafters,
+      config.width, 1.5, config.constructionType,
+      { memberForm: forms.beam }
+    );
+    let selBeam = overrides.beam ? beamResults.find((r) => r.sec.size === overrides.beam) || null : null;
+    if (!selBeam) selBeam = lightestPassing(beamResults);
+
+    // ── PURLIN ── spans between portal frames
+    const purlinFiltered = filterByForm(sections.rafters, forms.purlin);
+    const purlinResults = calcUtilisation(
+      purlinFiltered.length ? purlinFiltered : sections.rafters,
+      frameSpacing, purlinSpacing, config.constructionType,
+      { isPurlin: true, memberForm: forms.purlin }
+    );
+    let selPurlin = overrides.purlin ? purlinResults.find((r) => r.sec.size === overrides.purlin) || null : null;
+    if (!selPurlin) selPurlin = lightestPassing(purlinResults);
+
+    // ── LEDGER ── attached to house wall, spans between portal frame rafters
+    // The ledger is an outrigger off the house. It spans frame-to-frame.
+    const ledgerFiltered = filterByForm(sections.beams || sections.rafters, forms.ledger);
+    const ledgerResults = calcUtilisation(
+      ledgerFiltered.length ? ledgerFiltered : sections.beams || sections.rafters,
+      frameSpacing, purlinSpacing / 2, config.constructionType,
+      { memberForm: forms.ledger }
+    );
+    let selLedger = overrides.ledger ? ledgerResults.find((r) => r.sec.size === overrides.ledger) || null : null;
+    if (!selLedger) selLedger = lightestPassing(ledgerResults);
+
+    // ── FASCIA ── outrigger at open gable end, spans between portal frame rafters
+    // Same span as ledger — frame-to-frame with standoff brackets
+    const fasciaFiltered = filterByForm(sections.beams || sections.rafters, forms.fascia);
+    const fasciaResults = calcUtilisation(
+      fasciaFiltered.length ? fasciaFiltered : sections.beams || sections.rafters,
+      frameSpacing, purlinSpacing / 2, config.constructionType,
+      { memberForm: forms.fascia }
+    );
+    let selFascia = overrides.fascia ? fasciaResults.find((r) => r.sec.size === overrides.fascia) || null : null;
+    if (!selFascia) selFascia = lightestPassing(fasciaResults);
+
+    // ── GABLE BOTTOM CHORD ── spans full width at gable end
+    // Bottom chord (stringer) across the gable end, supports gable infill
+    const gableChordFiltered = filterByForm(sections.beams || sections.rafters, forms.gableChord);
+    const gableChordResults = calcUtilisation(
+      gableChordFiltered.length ? gableChordFiltered : sections.beams || sections.rafters,
+      config.width, frameSpacing / 2, config.constructionType,
+      { memberForm: forms.gableChord }
+    );
+    let selGableChord = overrides.gableChord ? gableChordResults.find((r) => r.sec.size === overrides.gableChord) || null : null;
+    if (!selGableChord) selGableChord = lightestPassing(gableChordResults);
+
+    // ── GABLE DROPPER ── vertical post from rafter down to bottom chord
+    // Height = rafter rise at half-span (gable apex height above eave)
+    const dropperHeight = (config.width / 2) * Math.tan(config.pitch * Math.PI / 180);
+    const gableDropperFiltered = filterByForm(sections.posts, forms.gableDropper);
+    const gableDropperResults = calcUtilisation(
+      gableDropperFiltered.length ? gableDropperFiltered : sections.posts,
+      Math.max(dropperHeight, 0.3), frameSpacing, config.constructionType,
+      { memberForm: forms.gableDropper }
+    );
+    let selGableDropper = overrides.gableDropper ? gableDropperResults.find((r) => r.sec.size === overrides.gableDropper) || null : null;
+    if (!selGableDropper) selGableDropper = lightestPassing(gableDropperResults);
+
+    return {
+      postResults, beamResults, purlinResults, ledgerResults, fasciaResults,
+      gableChordResults, gableDropperResults,
+      selPost, selBeam, selPurlin, selLedger, selFascia,
+      selGableChord, selGableDropper,
+      postSpan, frameSpacing, purlinSpacing, bracingFactor, phi,
+      dropperHeight,
+    };
+  }, [config, forms, overrides, selectedProfile]);
+
+  // ── Gable infill calculation ──
+  const gableInfill = useMemo(() => {
+    const dropperHeight = (config.width / 2) * Math.tan(config.pitch * Math.PI / 180);
+    return calcGableInfill(
+      config.width,
+      dropperHeight,
+      config.pitch,
+      selectedCladding,
+    );
+  }, [config.width, config.pitch, selectedCladding]);
+
+  // ── Dropdown builder ──
+  function buildDropdown(member: keyof MemberOverrides, results: UtilResult[], selected: UtilResult | null) {
+    if (!results.length) return <select disabled style={{ width: '100%', padding: '6px', fontSize: '11px' }}><option>No sections</option></select>;
+    return (
+      <select
+        value={overrides[member] || selected?.sec.size || ''}
+        onChange={(e) => setOverride(member, e.target.value || null)}
+        style={{
+          width: '100%', padding: '6px 8px', background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: '4px', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '11px', cursor: 'pointer',
+        }}
+      >
+        <option value="">Auto-select smallest passing</option>
+        {results.map((r) => {
+          const marker = r.passed ? '✓' : '✗';
+          const isSel = selected && r.sec.size === selected.sec.size;
+          return (
+            <option key={r.sec.size} value={r.sec.size} style={{ color: r.color }}>
+              {r.sec.size} {marker} {r.util.toFixed(1)}%{isSel ? ' ★' : ''}
+            </option>
+          );
+        })}
+      </select>
+    );
+  }
+
+  const isPortal = config.constructionType === 'csection' || config.constructionType === 'steel';
+  // Form-aware labels
+  const formTag = (f: MemberForm) => f === 'rhs' ? 'RHS' : f === 'plate' ? 'C+PLATE' : f === 'b2b' ? 'B2B' : 'C open';
+  const purlinLabel = `PURLIN (${formTag(forms.purlin)})`;
+  const postLabel = `COLUMN (${formTag(forms.post)})`;
+  const beamLabel = `${isPortal ? 'RAFTER' : 'BEAM'} (${formTag(forms.beam)})`;
+
+  // Check for all-fail condition
+  const allFail = calc.postResults.length && !calc.selPost?.passed &&
+                  calc.beamResults.length && !calc.selBeam?.passed &&
+                  calc.purlinResults.length && !calc.selPurlin?.passed;
+
+  return (
+    <div className="app-container">
+      {/* ── HEADER ── */}
+      <header className="app-header">
+        <div className="header-left">
+          <div className="logo-mark">
+            <div className="logo-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111210" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/>
+              </svg>
+            </div>
+            <span className="logo-name">Draftly</span>
+          </div>
+          <span className="logo-tagline">Structural Designer</span>
+        </div>
+        <div className="header-right">
+          <Badge variant="outline" style={{ fontFamily: 'var(--mono)', fontSize: '10px', letterSpacing: '0.06em' }}>
+            {STANDARDS[config.constructionType]}
+          </Badge>
+        </div>
+      </header>
+
+      {/* ── MAIN ── */}
+      <main className="app-main">
+        {/* ── INFO PANEL ── */}
+        <div className="info-panel">
+          Each structural member is designed independently for the selected material system. Use{' '}
+          <strong>Member form</strong> on each card to choose the section family (open C, back-to-back C, RHS/SHS).{' '}
+          The calculator recommends the smallest member in that family that passes the span and load;{' '}
+          you can override it via the dropdown.
+        </div>
+
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="tabs-custom">
+            <TabsTrigger value="structure" className="tab-trigger">Structure</TabsTrigger>
+            <TabsTrigger value="members" className="tab-trigger">Member Sizing</TabsTrigger>
+            <TabsTrigger value="frames" className="tab-trigger">Portal Frames</TabsTrigger>
+            <TabsTrigger value="drawings" className="tab-trigger">Drawings</TabsTrigger>
+          </TabsList>
+
+          {/* ── TAB: STRUCTURE CONFIG ── */}
+          <TabsContent value="structure">
+            <div className="config-grid">
+              {/* Building Type */}
+              <div className="config-card">
+                <label className="config-label">Building Type</label>
+                <div className="building-grid">
+                  {BUILDING_TYPES.map((bt) => (
+                    <button
+                      key={bt.id}
+                      className={`building-btn ${config.buildingType === bt.id ? 'active' : ''}`}
+                      onClick={() => {
+                        updateConfig({
+                          buildingType: bt.id as BuildingType,
+                          width: bt.defaultSpan,
+                          depth: bt.defaultDepth,
+                          height: bt.defaultHeight,
+                        });
+                      }}
+                    >
+                      <span style={{ fontSize: '20px' }}>{bt.icon}</span>
+                      <span style={{ fontSize: '12px', fontWeight: 500 }}>{bt.name}</span>
+                      <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>{bt.complexity}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Construction Type */}
+              <div className="config-card">
+                <label className="config-label">Frame Material</label>
+                <div className="material-grid">
+                  {(['timber', 'steel', 'csection', 'aluminium'] as ConstructionType[]).map((ct) => (
+                    <button
+                      key={ct}
+                      className={`material-btn ${config.constructionType === ct ? 'active' : ''}`}
+                      onClick={() => updateConfig({ constructionType: ct })}
+                    >
+                      <span style={{ fontSize: '16px' }}>
+                        {ct === 'timber' ? '🪵' : ct === 'steel' ? '⚙' : ct === 'csection' ? '⚡' : '🔩'}
+                      </span>
+                      <span style={{ fontSize: '12px', fontWeight: 500 }}>
+                        {ct === 'csection' ? 'C-Section' : ct.charAt(0).toUpperCase() + ct.slice(1)}
+                      </span>
+                      <span style={{ fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--mono)' }}>
+                        {MATERIAL_LABELS[ct].split(' ')[0]}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Attachment */}
+              <div className="config-card">
+                <label className="config-label">Attachment</label>
+                <div className="attach-grid">
+                  {([
+                    { value: 'freestanding', label: 'Freestanding', sub: '4 posts, independent' },
+                    { value: 'attached', label: 'Attached', sub: 'Fixed to dwelling' },
+                    { value: 'three-side', label: '3-Side Attached', sub: 'Dwelling on 3 sides' },
+                  ] as { value: AttachmentType; label: string; sub: string }[]).map((a) => (
+                    <button
+                      key={a.value}
+                      className={`attach-btn ${config.attachment === a.value ? 'active' : ''}`}
+                      onClick={() => updateConfig({ attachment: a.value })}
+                    >
+                      <span style={{ fontSize: '12px', fontWeight: 500 }}>{a.label}</span>
+                      <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>{a.sub}</span>
+                      {a.value === 'three-side' && (
+                        <span style={{ fontSize: '9px', color: 'var(--accent)', fontFamily: 'var(--mono)' }}>Bracing 35%</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Dimensions */}
+              <div className="config-card">
+                <label className="config-label">Dimensions</label>
+                <div className="dim-grid">
+                  <div className="dim-field">
+                    <label>Span (m)</label>
+                    <input
+                      type="number" step="0.01" min="0.5" max="30"
+                      value={config.width}
+                      onChange={(e) => updateConfig({ width: parseFloat(e.target.value) || 1 })}
+                    />
+                  </div>
+                  <div className="dim-field">
+                    <label>Depth (m)</label>
+                    <input
+                      type="number" step="0.01" min="0.5" max="30"
+                      value={config.depth}
+                      onChange={(e) => updateConfig({ depth: parseFloat(e.target.value) || 1 })}
+                    />
+                  </div>
+                  <div className="dim-field">
+                    <label>Height (m)</label>
+                    <input
+                      type="number" step="0.1" min="1.5" max="10"
+                      value={config.height}
+                      onChange={(e) => updateConfig({ height: parseFloat(e.target.value) || 2 })}
+                    />
+                  </div>
+                  <div className="dim-field">
+                    <label>Roof pitch (°)</label>
+                    <input
+                      type="number" step="0.5" min="0" max="45"
+                      value={config.pitch}
+                      onChange={(e) => updateConfig({ pitch: parseFloat(e.target.value) || 0 })}
+                    />
+                  </div>
+                  <div className="dim-field">
+                    <label>Wall standoff (mm)</label>
+                    <input
+                      type="number" step="10" min="50" max="500"
+                      value={standoff}
+                      onChange={(e) => setStandoff(parseInt(e.target.value) || 150)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Roofing Profile */}
+              <div className="config-card">
+                <label className="config-label">Roofing Profile</label>
+                <select
+                  value={selectedProfile}
+                  onChange={(e) => setSelectedProfile(e.target.value)}
+                  style={{
+                    width: '100%', padding: '8px 10px', background: 'var(--surface)', border: '1px solid var(--border)',
+                    borderRadius: '6px', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '12px', cursor: 'pointer',
+                  }}
+                >
+                  {ROOFING_PROFILES.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} — {p.internalSpan}mm spacing</option>
+                  ))}
+                </select>
+                <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: 6, fontFamily: 'var(--mono)' }}>
+                  Purlin spacing: {Math.round(calc.purlinSpacing * 1000)}mm centres
+                </div>
+              </div>
+
+              {/* Roof Type */}
+              <div className="config-card">
+                <label className="config-label">Roof Type</label>
+                <div className="roof-grid">
+                  {([
+                    { value: 'flat', label: 'Flat / Skillion', icon: '▬' },
+                    { value: 'gable', label: 'Gable', icon: '🔺' },
+                    { value: 'hip', label: 'Hip', icon: '◆' },
+                    { value: 'skillion', label: 'Skillion', icon: '◿' },
+                    { value: 'open', label: 'Open', icon: '▦' },
+                  ] as { value: RoofType; label: string; icon: string }[]).map((r) => (
+                    <button
+                      key={r.value}
+                      className={`roof-btn ${config.roofType === r.value ? 'active' : ''}`}
+                      onClick={() => updateConfig({ roofType: r.value })}
+                    >
+                      <span style={{ fontSize: '16px' }}>{r.icon}</span>
+                      <span style={{ fontSize: '11px' }}>{r.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* ── TAB: MEMBER SIZING ── */}
+          <TabsContent value="members">
+            <div className="sizing-header">
+              <div>
+                <div style={{ fontSize: '12px', color: 'var(--text)', fontWeight: 500 }}>
+                  {MATERIAL_LABELS[config.constructionType]} · {config.attachment.replace('-', '-')} · Bracing {(calc.bracingFactor * 100).toFixed(0)}%
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', marginTop: 2 }}>
+                  Load: {0.74} kPa ultimate / {0.48} kPa service · Deflection: span/250
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={resetOverrides} className="btn-ghost" style={{ fontSize: '11px', padding: '6px 12px' }}>
+                  Reset to Auto-Select
+                </button>
+                <button
+                  onClick={() => setShowAllPassing(!showAllPassing)}
+                  className="btn-accent"
+                  style={{ fontSize: '11px', padding: '6px 12px' }}
+                >
+                  {showAllPassing ? 'Hide' : 'Show'} All Passing ▾
+                </button>
+              </div>
+            </div>
+
+            {allFail && (
+              <div className="alert-error">
+                <strong>Structural engineer required.</strong> No standard sections pass for this span/loading. Engineer to specify custom section.
+              </div>
+            )}
+            {config.width > 7 && !allFail && (
+              <div className="alert-warn">
+                <strong>Long span {config.width.toFixed(2)}m:</strong> Flat plate welded to open face of rafter and column C-sections significantly increases torsional stiffness — consider C+plate member form.
+              </div>
+            )}
+
+            <div className="member-grid">
+              <MemberCard
+                label={postLabel}
+                icon="■"
+                result={calc.selPost}
+                dropdown={buildDropdown('post', calc.postResults, calc.selPost)}
+                onFormChange={(f) => updateForm('post', f)}
+                availableForms={getAvailableForms('post')}
+                currentForm={forms.post}
+              />
+              <MemberCard
+                label={beamLabel}
+                icon="▶"
+                result={calc.selBeam}
+                dropdown={buildDropdown('beam', calc.beamResults, calc.selBeam)}
+                onFormChange={(f) => updateForm('beam', f)}
+                availableForms={getAvailableForms('beam')}
+                currentForm={forms.beam}
+              />
+              <MemberCard
+                label={purlinLabel}
+                icon="◆"
+                result={calc.selPurlin}
+                dropdown={buildDropdown('purlin', calc.purlinResults, calc.selPurlin)}
+                onFormChange={(f) => updateForm('purlin', f)}
+                availableForms={getAvailableForms('purlin')}
+                currentForm={forms.purlin}
+              />
+              <MemberCard
+                label="LEDGER BEAM"
+                icon="═"
+                result={calc.selLedger}
+                dropdown={buildDropdown('ledger', calc.ledgerResults, calc.selLedger)}
+                onFormChange={(f) => updateForm('ledger', f)}
+                availableForms={getAvailableForms('ledger')}
+                currentForm={forms.ledger}
+              />
+              <MemberCard
+                label="FASCIA BEAM"
+                icon="═"
+                result={calc.selFascia}
+                dropdown={buildDropdown('fascia', calc.fasciaResults, calc.selFascia)}
+                onFormChange={(f) => updateForm('fascia', f)}
+                availableForms={getAvailableForms('fascia')}
+                currentForm={forms.fascia}
+              />
+              <MemberCard
+                label="GABLE BOTTOM CHORD"
+                icon="▭"
+                result={calc.selGableChord}
+                dropdown={buildDropdown('gableChord', calc.gableChordResults, calc.selGableChord)}
+                onFormChange={(f) => updateForm('gableChord', f)}
+                availableForms={getAvailableForms('gableChord')}
+                currentForm={forms.gableChord}
+              />
+              <MemberCard
+                label={`GABLE DROPPER (h=${calc.dropperHeight.toFixed(2)}m)`}
+                icon="│"
+                result={calc.selGableDropper}
+                dropdown={buildDropdown('gableDropper', calc.gableDropperResults, calc.selGableDropper)}
+                onFormChange={(f) => updateForm('gableDropper', f)}
+                availableForms={getAvailableForms('gableDropper')}
+                currentForm={forms.gableDropper}
+              />
+            </div>
+
+            {/* ── GABLE INFILL SECTION ── */}
+            {config.roofType === 'gable' && (
+              <div style={{ marginTop: 20 }}>
+                <Card style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                  <CardContent className="p-4">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <span style={{ fontSize: '16px' }}>▲</span>
+                      <span style={{ fontSize: '11px', fontFamily: 'var(--mono)', letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase', flex: 1 }}>
+                        Gable End Infill
+                      </span>
+                      {gableInfill.cladding.transparency > 50 && (
+                        <span style={{ fontSize: '9px', fontFamily: 'var(--mono)', color: 'var(--accent)' }}>
+                          {gableInfill.cladding.transparency}% light transmission
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Cladding selector */}
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'var(--mono)', display: 'block', marginBottom: 6 }}>
+                        Cladding type
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
+                        {CLADDING_TYPES.map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setSelectedCladding(c.id)}
+                            style={{
+                              display: 'flex', flexDirection: 'column', gap: 2,
+                              padding: '10px 12px', background: selectedCladding === c.id ? 'rgba(201,168,76,0.12)' : 'var(--surface2)',
+                              border: selectedCladding === c.id ? '1.5px solid var(--accent)' : '1px solid var(--border)',
+                              borderRadius: '6px', color: 'var(--text)', cursor: 'pointer',
+                              textAlign: 'left', transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <span style={{ fontSize: '11px', fontWeight: 600 }}>{c.name}</span>
+                            <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>{c.description}</span>
+                            <span style={{ fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--mono)' }}>
+                              Max span: {c.maxSpanH}mm H / {c.maxSpanV}mm V · {c.weight} kg/m²
+                              {c.transparency > 0 && ` · ${c.transparency}% light`}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* SVG layout */}
+                    <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', marginBottom: 12, border: '1px solid var(--border2)' }}>
+                      <div dangerouslySetInnerHTML={{
+                        __html: generateGableInfillSVG(
+                          gableInfill.gableWidth,
+                          gableInfill.gableHeight,
+                          gableInfill.nBays,
+                          gableInfill.dropperSpacing,
+                          gableInfill.cladding.name,
+                          gableInfill.panelWidth,
+                        )
+                      }} />
+                    </div>
+
+                    {/* Summary grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 6, fontSize: '10px', fontFamily: 'var(--mono)' }}>
+                      <div style={{ background: 'var(--surface2)', padding: '8px 10px', borderRadius: '4px' }}>
+                        <div style={{ color: 'var(--text-muted)', textTransform: 'uppercase', fontSize: '8px', letterSpacing: '0.06em', marginBottom: 3 }}>Panels</div>
+                        <div style={{ color: 'var(--text)', fontSize: '16px', fontWeight: 700 }}>{gableInfill.nBays}</div>
+                        <div style={{ color: 'var(--text-muted)' }}>@ {Math.round(gableInfill.panelWidth * 1000)}mm wide</div>
+                      </div>
+                      <div style={{ background: 'var(--surface2)', padding: '8px 10px', borderRadius: '4px' }}>
+                        <div style={{ color: 'var(--text-muted)', textTransform: 'uppercase', fontSize: '8px', letterSpacing: '0.06em', marginBottom: 3 }}>Droppers</div>
+                        <div style={{ color: 'var(--text)', fontSize: '16px', fontWeight: 700 }}>{Math.max(0, gableInfill.nDroppers - 2)}</div>
+                        <div style={{ color: 'var(--text-muted)' }}>intermediate + 2 posts</div>
+                      </div>
+                      <div style={{ background: 'var(--surface2)', padding: '8px 10px', borderRadius: '4px' }}>
+                        <div style={{ color: 'var(--text-muted)', textTransform: 'uppercase', fontSize: '8px', letterSpacing: '0.06em', marginBottom: 3 }}>Cladding area</div>
+                        <div style={{ color: 'var(--text)', fontSize: '16px', fontWeight: 700 }}>{gableInfill.claddingArea.toFixed(1)}</div>
+                        <div style={{ color: 'var(--text-muted)' }}>m² · ~{gableInfill.claddingSheets} sheets</div>
+                      </div>
+                      <div style={{ background: 'var(--surface2)', padding: '8px 10px', borderRadius: '4px' }}>
+                        <div style={{ color: 'var(--text-muted)', textTransform: 'uppercase', fontSize: '8px', letterSpacing: '0.06em', marginBottom: 3 }}>Angle trim</div>
+                        <div style={{ color: 'var(--text)', fontSize: '16px', fontWeight: 700 }}>{gableInfill.frameAngleM.toFixed(1)}</div>
+                        <div style={{ color: 'var(--text-muted)' }}>m cold-formed angle</div>
+                      </div>
+                      <div style={{ background: gableInfill.dropperEngineering.passed ? 'rgba(76,175,80,0.08)' : 'rgba(244,67,54,0.08)', padding: '8px 10px', borderRadius: '4px', border: gableInfill.dropperEngineering.passed ? '1px solid rgba(76,175,80,0.25)' : '1px solid rgba(244,67,54,0.25)' }}>
+                        <div style={{ color: 'var(--text-muted)', textTransform: 'uppercase', fontSize: '8px', letterSpacing: '0.06em', marginBottom: 3 }}>Dropper util</div>
+                        <div style={{ color: gableInfill.dropperEngineering.passed ? '#4caf50' : '#f44336', fontSize: '16px', fontWeight: 700 }}>{gableInfill.dropperEngineering.utilisation}%</div>
+                        <div style={{ color: 'var(--text-muted)' }}>wind @ {gableInfill.dropperEngineering.windLoad.toFixed(2)} kN/m</div>
+                      </div>
+                    </div>
+
+                    {/* Notes */}
+                    <div style={{ marginTop: 10, fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                      Each panel framed with cold-formed angle (25×25×2.5 EA) on all four sides, screwed at 300mm centres.
+                      Droppers are C100×50×1.6 G450 gal C-sections, fixed to rafter and bottom chord with M12 bolts.
+                      {gableInfill.cladding.transparency > 50 && ' Polycarbonate sheets lapped 150mm at joins, sealed with compatible tape.'}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* All Passing Sections panel */}
+            {showAllPassing && (
+              <div style={{ marginTop: 16 }}>
+                <AllPassingPanel
+                  postResults={calc.postResults}
+                  beamResults={calc.beamResults}
+                  purlinResults={calc.purlinResults}
+                  onApply={(size, member) => setOverride(member as keyof MemberOverrides, size)}
+                />
+              </div>
+            )}
+          </TabsContent>
+
+          {/* ── TAB: PORTAL FRAMES ── */}
+          <TabsContent value="frames">
+            <div className="config-card" style={{ maxWidth: 600 }}>
+              <label className="config-label">Portal Frame Layout</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, alignItems: 'end', marginBottom: 12 }}>
+                <div>
+                  <label style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>No. of frames</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <button onClick={() => updateConfig({ portalFrameCount: Math.max(2, config.portalFrameCount - 1) })} className="btn-adjust">−</button>
+                    <input
+                      type="number" min={2} max={10} step={1}
+                      value={config.portalFrameCount}
+                      onChange={(e) => updateConfig({ portalFrameCount: Math.max(2, Math.min(10, parseInt(e.target.value) || 2)) })}
+                      style={{ width: 48, textAlign: 'center', background: 'var(--surface)', border: '1px solid var(--accent)', borderRadius: '4px', color: 'var(--accent)', fontFamily: 'var(--mono)', fontSize: '16px', padding: '4px', fontWeight: 700 }}
+                    />
+                    <button onClick={() => updateConfig({ portalFrameCount: Math.min(10, config.portalFrameCount + 1) })} className="btn-adjust">+</button>
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Frame spacing</div>
+                  <div style={{ fontSize: '18px', fontFamily: 'var(--mono)', color: 'var(--text)' }}>{calc.frameSpacing.toFixed(2)} m</div>
+                  <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>along {config.depth.toFixed(2)}m depth</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Purlin span</div>
+                  <div style={{ fontSize: '18px', fontFamily: 'var(--mono)', color: 'var(--text)' }}>{calc.frameSpacing.toFixed(2)} m</div>
+                  <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>@ {Math.round(calc.purlinSpacing * 1000)}mm centres</div>
+                </div>
+              </div>
+
+              {/* Frame count options table */}
+              <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                <div style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+                  Frame Count Options — click to select
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '70px 60px 55px 65px 55px 55px 65px', gap: 4, fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '1px solid var(--border)', padding: '4px 0', marginBottom: 4 }}>
+                  <span>Frames</span><span>Spacing</span><span>Purlin%</span><span>Purlins</span><span>Rafter m</span><span>Purlin m</span><span>~Steel $</span>
+                </div>
+                {Array.from({ length: 6 }, (_, i) => i + 2).map((nf) => {
+                  const fs = config.depth / (nf - 1);
+                  const wPurlin = 0.74 * calc.purlinSpacing;
+                  const Mreq = wPurlin * fs * fs / 8;
+                  const purlinUtil = calc.selPurlin?.MCap ? (Mreq / calc.selPurlin.MCap) * 100 : 999;
+                  const bays = nf - 1;
+                  const purlinsPerBay = Math.max(0, Math.ceil(fs / calc.purlinSpacing) - 1);
+                  const rafterLm = nf * config.width;
+                  const purlinLm = purlinsPerBay * bays * config.width;
+                  const totalLm = rafterLm + purlinLm;
+                  const col = purlinUtil < 70 ? '#4caf50' : purlinUtil < 85 ? '#8bc34a' : purlinUtil < 100 ? '#ff9800' : '#f44336';
+                  const isRec = nf === config.portalFrameCount;
+                  return (
+                    <div
+                      key={nf}
+                      onClick={() => updateConfig({ portalFrameCount: nf })}
+                      style={{
+                        display: 'grid', gridTemplateColumns: '70px 60px 55px 65px 55px 55px 65px', gap: 4, padding: '4px 8px',
+                        background: isRec ? 'rgba(201,168,76,0.08)' : 'transparent',
+                        border: isRec ? '1px solid rgba(201,168,76,0.35)' : '1px solid transparent',
+                        borderRadius: 4, cursor: 'pointer', fontSize: '10px', fontFamily: 'var(--mono)',
+                      }}
+                    >
+                      <span style={{ color: isRec ? '#c9a84c' : 'var(--text)', fontWeight: isRec ? 700 : 400 }}>{nf} {isRec ? '★' : ''}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{fs.toFixed(2)}m</span>
+                      <span style={{ color: col }}>{purlinUtil < 999 ? Math.round(purlinUtil) + '%' : 'FAIL'}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{purlinsPerBay}×{bays}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{rafterLm.toFixed(1)}m</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{purlinLm.toFixed(1)}m</span>
+                      <span style={{ color: 'var(--text-muted)' }}>${Math.round(totalLm * 38).toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize: '9px', color: 'var(--text-muted)', marginTop: 8, fontStyle: 'italic' }}>
+                  ★ Currently selected. Purlin% = utilisation at that frame spacing. Steel $ indicative at ~$38/lm supply only.
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* ── TAB: DRAWINGS ── */}
+          <TabsContent value="drawings">
+            <div className="config-grid" style={{ gridTemplateColumns: '1fr' }}>
+              {/* Plan View */}
+              <div className="config-card">
+                <label className="config-label">Plan View — Structure Layout</label>
+                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
+                  <div dangerouslySetInnerHTML={{
+                    __html: generateBuildingPlanSVG(
+                      config.width, config.depth, config.height, config.pitch,
+                      config.attachment, config.portalFrameCount, config.roofType === 'gable',
+                      standoff / 1000  // convert mm to m
+                    )
+                  }} />
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', lineHeight: 1.6 }}>
+                  Shows the structure in plan view relative to the existing dwelling.
+                  {config.attachment === 'three-side' && ' Three-side attached — structure wraps around the corner of the house.'}
+                  {config.attachment === 'attached' && ' Attached — structure fixed along one wall of the house.'}
+                  {config.attachment === 'freestanding' && ' Freestanding — independent structure with 4 posts.'}
+                  Portal frames shown with post locations and purlin lines.
+                </div>
+              </div>
+
+              {/* Roof Geometry */}
+              <div className="config-card">
+                <label className="config-label">Roof Geometry Diagram</label>
+                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
+                  <div dangerouslySetInnerHTML={{
+                    __html: generateRoofGeometrySVG(
+                      config.width, config.pitch, config.height, config.roofType === 'gable'
+                    )
+                  }} />
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', lineHeight: 1.6 }}>
+                  Triangular geometry showing span, rise, and rafter length. Pitch angles marked.
+                  Gable height at apex calculated from half-span × tan(pitch).
+                </div>
+              </div>
+
+              {/* Wall Section Detail */}
+              <div className="config-card">
+                <label className="config-label">Wall Section — Existing Dwelling (measured from site)</label>
+                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
+                  <div dangerouslySetInnerHTML={{ __html: generateWallSectionSVG() }} />
+                </div>
+              </div>
+
+              {/* Full Detail Elevation Assembly */}
+              <div className="config-card">
+                <label className="config-label">Full Detail Elevation — Wall (A-A) · Socket Joint (B-B) · Post (C-C)</label>
+                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
+                  <div dangerouslySetInnerHTML={{ __html: generateFullElevationSVG() }} />
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', lineHeight: 1.6 }}>
+                  Three-panel detail elevation per AS1100. Left: existing dwelling wall at eave with 65×65 SHS standoff.
+                  Centre: socket joint detail — 50×50 stub with packers, rafter slips over. Right: corner post base
+                  with concrete pad and anchor bolts. Sections A-A, B-B, C-C.
+                </div>
+              </div>
+
+              {/* Connection Detail Drawings */}
+              <div className="config-card">
+                <label className="config-label">Connection Details (using selected members)</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)' }}>
+                    <div dangerouslySetInnerHTML={{ __html: generateCornerPostSVG(calc.selLedger?.sec || null, calc.selPost?.sec || null) }} />
+                  </div>
+                  <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)' }}>
+                    <div dangerouslySetInnerHTML={{ __html: generateRafterLedgerSVG(calc.selBeam?.sec || null, calc.selLedger?.sec || null) }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Cross-Bracing Detail */}
+              <div className="config-card">
+                <label className="config-label">Cross-Bracing (X-Brace) — Lateral Stability</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)' }}>
+                    <div dangerouslySetInnerHTML={{ __html: generateCrossBracingSVG(calc.frameSpacing, config.height, calc.selPurlin?.sec || null) }} />
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', lineHeight: 1.7, padding: '8px' }}>
+                    <div style={{ color: 'var(--accent)', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Cross-Bracing Notes</div>
+                    <div>• Resists lateral wind and racking forces</div>
+                    <div>• Typically placed in <strong>end bays</strong></div>
+                    <div>• Uses smallest C-section (e.g. C75×40×1.2)</div>
+                    <div>• Bolted to posts and rafters with M12</div>
+                    <div>• Tension-only design (one brace active at a time)</div>
+                    <div>• Prevents portal frame sway</div>
+                    <div style={{ marginTop: 8, color: 'var(--text-subtle)' }}>
+                      For 3-side attached: bracing only needed in
+                      open gable end bay (bay nearest corner post).
+                    </div>
+                    <div style={{ marginTop: 6, color: 'var(--warn)' }}>
+                      Critical for structures {'>'} 6m span or
+                      wind regions {'>'} N2.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Socket Joint Detail */}
+              <div className="config-card">
+                <label className="config-label">Socket Joint — Rafter to 65×65 Standoff (no visible end plate)</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)' }}>
+                    <div dangerouslySetInnerHTML={{ __html: generateSocketJointSVG() }} />
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', lineHeight: 1.7, padding: '8px' }}>
+                    <div style={{ color: 'var(--accent)', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>How It Works</div>
+                    <div>• 65×65 SHS runs continuous, through fascia</div>
+                    <div>• 50×50 SHS stub welded to top face at each rafter</div>
+                    <div>• 50×5mm packer plates welded both faces of 50×50</div>
+                    <div>• Packers bring 50×50 out to 60mm (C-section internal)</div>
+                    <div>• Rafter (C250×65) slips over from above</div>
+                    <div>• 4× M10 FHCS per side into tapped 50×50</div>
+                    <div style={{ marginTop: 8, color: 'var(--text-subtle)' }}>
+                      Result: zero visible plates, just clean
+                      socket heads on the rafter flanges. The
+                      65×65 reads as one continuous line.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Fascia Penetration Detail */}
+              <div className="config-card">
+                <label className="config-label">Fascia Penetration — 65×65 through existing fascia</label>
+                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', maxWidth: 480 }}>
+                  <div dangerouslySetInnerHTML={{ __html: generateFasciaPenetrationSVG() }} />
+                </div>
+              </div>
+
+              {/* Connection Inventory */}
+              <div className="config-card">
+                <label className="config-label">Connection Inventory</label>
+                <div style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', marginBottom: 8 }}>
+                  Connections required for each member type in this structure
+                </div>
+                {(['post', 'beam', 'purlin', 'ledger', 'fascia', 'gableChord', 'gableDropper'] as const).map((member) => {
+                  const conns = getConnectionsForMember(member);
+                  const labels: Record<string, string> = {
+                    post: 'COLUMN / POST', beam: 'RAFTER / BEAM', purlin: 'PURLIN',
+                    ledger: 'LEDGER BEAM', fascia: 'FASCIA BEAM',
+                    gableChord: 'GABLE BOTTOM CHORD', gableDropper: 'GABLE DROPPER',
+                  };
+                  return (
+                    <div key={member} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: '9px', color: 'var(--accent)', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.06em', padding: '4px 8px', background: 'var(--surface2)', borderRadius: '4px 4px 0 0' }}>
+                        {labels[member]}
+                      </div>
+                      <div style={{ border: '1px solid var(--border)', borderTop: 'none', borderRadius: '0 0 4px 4px' }}>
+                        {conns.map((c) => (
+                          <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '1fr 100px 70px', gap: 8, padding: '5px 8px', borderBottom: '1px solid var(--border2)', fontSize: '10px', fontFamily: 'var(--mono)' }}>
+                            <div>
+                              <div style={{ color: 'var(--text)', fontWeight: 500 }}>{c.name}</div>
+                              <div style={{ color: 'var(--text-muted)', fontSize: '9px' }}>{c.capacity}</div>
+                              <div style={{ color: 'var(--text-subtle)', fontSize: '8px', marginTop: 2 }}>
+                                {c.components.join(' · ')}
+                              </div>
+                            </div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '9px', textAlign: 'right' }}>
+                              {c.standard}
+                              {c.engineerRequired && <span style={{ color: '#f44336', marginLeft: 4 }}>ENG*</span>}
+                            </div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '9px', textAlign: 'right' }}>
+                              {c.timeMin}min
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 4 }}>
+                  * ENG = engineer certification required. All connections to AS4600 / AS4100 / AS5216.
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
+      </main>
+    </div>
+  );
+}
+
+// ── All Passing Sections Panel ──
+function AllPassingPanel({
+  postResults, beamResults, purlinResults, onApply,
+}: {
+  postResults: UtilResult[];
+  beamResults: UtilResult[];
+  purlinResults: UtilResult[];
+  onApply: (size: string, member: string) => void;
+}) {
+  const mono = { fontFamily: 'var(--mono)', fontSize: '10px' };
+  const headerStyle = { display: 'grid', gridTemplateColumns: '1fr 55px 60px 60px 55px', gap: 4, padding: '4px 8px', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', ...mono } as const;
+
+  function SectionRows({ results, label }: { results: UtilResult[]; label: string }) {
+    const passing = results.filter((r) => r.util <= 100);
+    if (!passing.length) return <div style={{ padding: '6px 8px', ...mono, color: 'var(--text-muted)' }}>No passing sections</div>;
+    return (
+      <>
+        {passing.map((r) => {
+          const u = r.util;
+          const col = u < 70 ? '#4caf50' : u < 85 ? '#8bc34a' : '#ff9800';
+          return (
+            <div
+              key={r.sec.size}
+              onClick={() => onApply(r.sec.size, label)}
+              style={{ display: 'grid', gridTemplateColumns: '1fr 55px 60px 60px 55px', gap: 4, padding: '4px 8px', ...mono, cursor: 'pointer', borderBottom: '1px solid var(--border2)' }}
+              title="Click to apply"
+            >
+              <span style={{ color: 'var(--text)' }}>{r.sec.size}</span>
+              <span style={{ color: col }}>{u.toFixed(1)}%</span>
+              <span style={{ color: 'var(--text-muted)' }}>{r.M.toFixed(2)}</span>
+              <span style={{ color: col }}>{r.MCap.toFixed(2)}</span>
+              <span style={{ color: 'var(--text-muted)' }}>{r.delta.toFixed(1)}</span>
+            </div>
+          );
+        })}
+      </>
+    );
+  }
+
+  return (
+    <Card style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+      <CardContent className="p-3">
+        <div style={{ ...mono, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+          All Passing Sections — click row to apply
+        </div>
+
+        {(['post', 'beam', 'purlin'] as const).map((member) => {
+          const results = member === 'post' ? postResults : member === 'beam' ? beamResults : purlinResults;
+          const label = member === 'post' ? 'COLUMN' : member === 'beam' ? 'RAFTER' : 'PURLIN';
+          return (
+            <div key={member} style={{ marginBottom: 10 }}>
+              <div style={{ ...mono, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', padding: '4px 8px', background: 'var(--surface2)', borderRadius: '4px 4px 0 0', fontSize: '9px' }}>
+                {label}
+              </div>
+              <div style={headerStyle}>
+                <span>Section</span><span>Util%</span><span>M kNm</span><span>M&#x03C6; kNm</span><span>&#x03B4; mm</span>
+              </div>
+              <SectionRows results={results} label={member} />
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
 }

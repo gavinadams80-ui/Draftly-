@@ -17,6 +17,7 @@ import {
 } from '@/lib/engine';
 import { generateThreeViewSVG, generateGableInfillSVG } from '@/lib/drawings';
 import { generateBuildingPlanSVG, generateRoofGeometrySVG } from '@/lib/planDrawings';
+import { withTitleBlock, DEFAULT_TITLE_BLOCK, type TitleBlockData } from '@/lib/titleBlock';
 import { generateCornerPostSVG, generateRafterLedgerSVG, generateCrossBracingSVG } from '@/lib/connectionDrawings';
 import { generateSocketJointSVG, generateFasciaPenetrationSVG } from '@/lib/socketJointDrawing';
 import { generateWallSectionSVG } from '@/lib/wallSection';
@@ -179,7 +180,12 @@ export default function App() {
   const [showAllPassing, setShowAllPassing] = useState(false);
   const [activeTab, setActiveTab] = useState('structure');
   const [selectedCladding, setSelectedCladding] = useState('poly-twin-10');
-  const [standoff, setStandoff] = useState(150); // mm — standoff from brick wall
+  const [standoff, setStandoff] = useState(150);        // mm — standoff from house fascia
+  const [leftSetback, setLeftSetback] = useState(0);    // m — right-side wall stops this far from front (0 = full depth)
+  const [rightSetback, setRightSetback] = useState(1.8); // m — right-side wall stops this far from front
+  const [titleBlock, setTitleBlock] = useState<TitleBlockData>(DEFAULT_TITLE_BLOCK);
+  const updateTB = useCallback((patch: Partial<TitleBlockData>) =>
+    setTitleBlock(prev => ({ ...prev, ...patch })), []);
 
   const updateConfig = useCallback((patch: Partial<ProjectConfig>) => {
     setConfig((prev) => ({ ...prev, ...patch }));
@@ -503,6 +509,67 @@ export default function App() {
                       value={standoff}
                       onChange={(e) => setStandoff(parseInt(e.target.value) || 150)}
                     />
+                  </div>
+                  <div className="dim-field">
+                    <label>Left wall setback (m)</label>
+                    <input
+                      type="number" step="0.1" min="0" max={config.depth}
+                      value={leftSetback}
+                      onChange={(e) => setLeftSetback(parseFloat(e.target.value) || 0)}
+                    />
+                  </div>
+                  <div className="dim-field">
+                    <label>Right wall setback (m)</label>
+                    <input
+                      type="number" step="0.1" min="0" max={config.depth}
+                      value={rightSetback}
+                      onChange={(e) => setRightSetback(parseFloat(e.target.value) || 0)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Title Block ── */}
+              <div className="config-card">
+                <label className="config-label">Title Block — Drawing Register</label>
+                <div className="dim-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  {([
+                    ['Project Name',     'projectName',     titleBlock.projectName],
+                    ['Project Number',   'projectNumber',   titleBlock.projectNumber],
+                    ['Client / Owner',   'clientName',      titleBlock.clientName],
+                    ['Property Address', 'propertyAddress', titleBlock.propertyAddress],
+                    ['Council',          'council',         titleBlock.council],
+                    ['Designed By',      'designedBy',      titleBlock.designedBy],
+                    ['Drawn By',         'drawnBy',         titleBlock.drawnBy],
+                    ['Checked By',       'checkedBy',       titleBlock.checkedBy],
+                    ['Approved By',      'approvedBy',      titleBlock.approvedBy],
+                    ['Revision',         'revision',        titleBlock.revision],
+                    ['Date',             'date',            titleBlock.date],
+                  ] as [string, keyof typeof titleBlock, string][]).map(([label, key, val]) => (
+                    <div className="dim-field" key={key}>
+                      <label>{label}</label>
+                      <input
+                        type="text"
+                        value={val}
+                        onChange={e => updateTB({ [key]: e.target.value })}
+                      />
+                    </div>
+                  ))}
+                  <div className="dim-field">
+                    <label>Status</label>
+                    <select
+                      value={titleBlock.status}
+                      onChange={e => updateTB({ status: e.target.value })}
+                      style={{ width: '100%', padding: '8px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '12px' }}
+                    >
+                      {['For Approval', 'For Construction', 'As Constructed', 'Preliminary'].map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="dim-field">
+                    <label>Document Type</label>
+                    <input type="text" value={titleBlock.documentType} onChange={e => updateTB({ documentType: e.target.value })} />
                   </div>
                 </div>
               </div>
@@ -853,10 +920,13 @@ export default function App() {
                 <label className="config-label">Plan View — Structure Layout</label>
                 <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
                   <div dangerouslySetInnerHTML={{
-                    __html: generateBuildingPlanSVG(
-                      config.width, config.depth, config.height, config.pitch,
-                      config.attachment, config.portalFrameCount, config.roofType === 'gable',
-                      standoff / 1000  // convert mm to m
+                    __html: withTitleBlock(
+                      generateBuildingPlanSVG(
+                        config.width, config.depth, config.height, config.pitch,
+                        config.attachment, config.portalFrameCount, config.roofType === 'gable',
+                        standoff / 1000, leftSetback, rightSetback, calc.purlinSpacing
+                      ),
+                      titleBlock, 'Plan View — Structure Layout', 'S-001', 1, 1, 'NTS'
                     )
                   }} />
                 </div>
@@ -874,8 +944,14 @@ export default function App() {
                 <label className="config-label">Roof Geometry Diagram</label>
                 <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
                   <div dangerouslySetInnerHTML={{
-                    __html: generateRoofGeometrySVG(
-                      config.width, config.pitch, config.height, config.roofType === 'gable'
+                    __html: withTitleBlock(
+                      generateRoofGeometrySVG(
+                        config.width, config.pitch, config.height, config.roofType === 'gable',
+                        calc.selBeam?.sec.size ?? null,
+                        calc.selLedger?.sec.size ?? null,
+                        standoff / 1000
+                      ),
+                      titleBlock, 'Roof Geometry — Side View', 'S-002', 1, 1, 'NTS'
                     )
                   }} />
                 </div>
@@ -885,11 +961,45 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Wall Section Detail */}
+              {/* ── Portal Frame 1 — Back (House Connection) ── */}
               <div className="config-card">
-                <label className="config-label">Wall Section — Existing Dwelling (measured from site)</label>
+                <label className="config-label">Section A-A — Portal Frame 1 · Back (House Connection)</label>
                 <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
-                  <div dangerouslySetInnerHTML={{ __html: generateWallSectionSVG() }} />
+                  <div dangerouslySetInnerHTML={{ __html: withTitleBlock(generateWallSectionSVG(
+                        config.depth * 1000, config.pitch,
+                        calc.selPurlin?.sec.d ?? 100,
+                        calc.selPurlin?.sec.b ?? 50,
+                        calc.selPurlin?.sec.t ?? 1.5,
+                        true, calc.selLedger?.sec.d ?? 150, 'back'
+                      ), titleBlock, 'Section A-A — PF1 Back (House Connection)', 'S-003', 1, 3, 'NTS') }} />
+                </div>
+              </div>
+
+              {/* ── Portal Frame 2 — Intermediate (Middle) ── */}
+              <div className="config-card">
+                <label className="config-label">Section A-A — Portal Frame 2 · Intermediate (Middle)</label>
+                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
+                  <div dangerouslySetInnerHTML={{ __html: withTitleBlock(generateWallSectionSVG(
+                        config.depth * 1000, config.pitch,
+                        calc.selPurlin?.sec.d ?? 100,
+                        calc.selPurlin?.sec.b ?? 50,
+                        calc.selPurlin?.sec.t ?? 1.5
+                      ), titleBlock, 'Section A-A — PF2 Intermediate', 'S-004', 2, 3, 'NTS') }} />
+                </div>
+              </div>
+
+              {/* ── Portal Frame 3 — Front (Fascia End) ── */}
+              <div className="config-card">
+                <label className="config-label">Section A-A — Portal Frame 3 · Front (Fascia End)</label>
+                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
+                  <div dangerouslySetInnerHTML={{ __html: withTitleBlock(generateWallSectionSVG(
+                        config.depth * 1000, config.pitch,
+                        calc.selPurlin?.sec.d ?? 100,
+                        calc.selPurlin?.sec.b ?? 50,
+                        calc.selPurlin?.sec.t ?? 1.5,
+                        true, calc.selLedger?.sec.d ?? 150, 'front',
+                        calc.selPost?.sec.d ?? 100
+                      ), titleBlock, 'Section A-A — PF3 Front (Fascia End)', 'S-005', 3, 3, 'NTS') }} />
                 </div>
               </div>
 
@@ -897,7 +1007,7 @@ export default function App() {
               <div className="config-card">
                 <label className="config-label">Full Detail Elevation — Wall (A-A) · Socket Joint (B-B) · Post (C-C)</label>
                 <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
-                  <div dangerouslySetInnerHTML={{ __html: generateFullElevationSVG() }} />
+                  <div dangerouslySetInnerHTML={{ __html: withTitleBlock(generateFullElevationSVG(), titleBlock, 'Full Detail Elevation', 'S-004', 1, 1, 'NTS') }} />
                 </div>
                 <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', lineHeight: 1.6 }}>
                   Three-panel detail elevation per AS1100. Left: existing dwelling wall at eave with 65×65 SHS standoff.

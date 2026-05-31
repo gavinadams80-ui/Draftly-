@@ -8,6 +8,15 @@ export interface DrawingParams {
   boltSpacing: number;
   weldSize: number;
 
+  // ── Attachment Configuration ──
+  attachBack: boolean;
+  attachLeft: boolean;
+  attachRight: boolean;
+  attachFront: boolean;
+  rightOffsetMm: number;
+  leftOffsetMm: number;
+  backOffsetMm: number;
+
   // ── Wall Section (DRF-001) ──
   brickThickness: number;
   cavityWidth: number;
@@ -67,6 +76,9 @@ export interface DrawingParams {
   showRafterLength: boolean;
   showRise: boolean;
   showPitchArc: boolean;
+
+  // ── Gutter ──
+  showGutter: boolean;
 }
 
 export function getDefaultDrawingParams(): DrawingParams {
@@ -75,6 +87,15 @@ export function getDefaultDrawingParams(): DrawingParams {
     boltSize: 'M12',
     boltSpacing: 600,
     weldSize: 6,
+
+    // Attachment defaults: 3-side (back + left + right)
+    attachBack: true,
+    attachLeft: true,
+    attachRight: true,
+    attachFront: false,
+    rightOffsetMm: 1800,
+    leftOffsetMm: 0,
+    backOffsetMm: 0,
 
     brickThickness: 110,
     cavityWidth: 50,
@@ -125,6 +146,8 @@ export function getDefaultDrawingParams(): DrawingParams {
     showRafterLength: true,
     showRise: true,
     showPitchArc: true,
+
+    showGutter: true,
   };
 }
 
@@ -142,8 +165,18 @@ export interface ParamMeta {
 }
 
 export const DRAWING_PARAM_META: ParamMeta[] = [
+  // Attachment Configuration
+  { key: 'attachBack', label: 'Attach to back wall', type: 'boolean', category: 'Attachment', drawingIds: ['plan'] },
+  { key: 'attachLeft', label: 'Attach to left wall', type: 'boolean', category: 'Attachment', drawingIds: ['plan'] },
+  { key: 'attachRight', label: 'Attach to right wall', type: 'boolean', category: 'Attachment', drawingIds: ['plan'] },
+  { key: 'attachFront', label: 'Attach to front wall', type: 'boolean', category: 'Attachment', drawingIds: ['plan'] },
+  // Offsets: 0 = full wrap, large number = no wrap. Using text input (no max) so any value works
+  { key: 'rightOffsetMm', label: 'Right wall offset', type: 'number', min: 0, step: 50, unit: 'mm', category: 'Attachment', drawingIds: ['plan'] },
+  { key: 'leftOffsetMm', label: 'Left wall offset', type: 'number', min: 0, step: 50, unit: 'mm', category: 'Attachment', drawingIds: ['plan'] },
+  { key: 'backOffsetMm', label: 'Back wall offset', type: 'number', min: 0, step: 50, unit: 'mm', category: 'Attachment', drawingIds: ['plan'] },
+
   // Common
-  { key: 'standoffMm', label: 'Standoff from wall', type: 'number', min: 50, max: 500, step: 10, unit: 'mm', category: 'Common', drawingIds: ['DRF-001','DRF-006','DRF-007','DRF-008'] },
+  { key: 'standoffMm', label: 'Standoff from wall', type: 'number', min: 50, max: 500, step: 10, unit: 'mm', category: 'Common', drawingIds: ['DRF-001','DRF-006','DRF-007','DRF-008','plan'] },
   { key: 'boltSize', label: 'Bolt size', type: 'select', options: ['M10','M12','M16','M20'], category: 'Common', drawingIds: ['DRF-003','DRF-004','DRF-005','DRF-006'] },
   { key: 'boltSpacing', label: 'Bolt spacing', type: 'number', min: 300, max: 1200, step: 50, unit: 'mm ctr', category: 'Common', drawingIds: ['DRF-003','DRF-006','DRF-007'] },
   { key: 'weldSize', label: 'Fillet weld size', type: 'number', min: 3, max: 12, step: 1, unit: 'mm', category: 'Common', drawingIds: ['DRF-007'] },
@@ -152,7 +185,8 @@ export const DRAWING_PARAM_META: ParamMeta[] = [
   { key: 'brickThickness', label: 'Brick thickness', type: 'number', min: 70, max: 230, step: 5, unit: 'mm', category: 'Wall Section', drawingIds: ['DRF-001'] },
   { key: 'cavityWidth', label: 'Cavity width', type: 'number', min: 25, max: 100, step: 5, unit: 'mm', category: 'Wall Section', drawingIds: ['DRF-001'] },
   { key: 'studSize', label: 'Timber stud size', type: 'select', options: ['90x45','90x35','70x35','70x45'], category: 'Wall Section', drawingIds: ['DRF-001'] },
-  { key: 'fasciaThickness', label: 'Fascia thickness', type: 'number', min: 15, max: 50, step: 5, unit: 'mm', category: 'Wall Section', drawingIds: ['DRF-001','DRF-008'] },
+  // fasciaThickness now also affects plan view clear span calculation
+  { key: 'fasciaThickness', label: 'Fascia thickness', type: 'number', min: 15, max: 100, step: 5, unit: 'mm', category: 'Wall Section', drawingIds: ['DRF-001','DRF-008','plan'] },
   { key: 'shsStandoff', label: 'SHS standoff size', type: 'select', options: ['50x50','65x65','75x75','90x90'], category: 'Wall Section', drawingIds: ['DRF-001','DRF-007','DRF-008'] },
   { key: 'lagScrewSize', label: 'Lag screw size', type: 'select', options: ['M10x80','M12x100','M16x120'], category: 'Wall Section', drawingIds: ['DRF-001'] },
   { key: 'lagScrewSpacing', label: 'Lag screw spacing', type: 'number', min: 300, max: 1200, step: 50, unit: 'mm ctr', category: 'Wall Section', drawingIds: ['DRF-001'] },
@@ -185,7 +219,7 @@ export const DRAWING_PARAM_META: ParamMeta[] = [
   { key: 'braceSize', label: 'Bracing C-section', type: 'select', options: ['C75x40x1.2','C100x50x1.6','C150x50x1.9'], category: 'Bracing', drawingIds: ['DRF-005'] },
 
   // Ledger Connection
-  { key: 'bracketType', label: 'Bracket type', type: 'select', options: ['angle','standoff','box'], category: 'Ledger', drawingIds: ['DRF-006'] },
+  { key: 'bracketType', label: 'Bracket type', type: 'select', options: ['angle','plate','standoff','box'], category: 'Ledger', drawingIds: ['DRF-006'] },
   { key: 'bracketMaterial', label: 'Bracket material', type: 'select', options: ['gal-steel','stainless','aluminium'], category: 'Ledger', drawingIds: ['DRF-006'] },
 
   // Display toggles
@@ -196,6 +230,7 @@ export const DRAWING_PARAM_META: ParamMeta[] = [
   { key: 'showRafterLength', label: 'Show rafter length', type: 'boolean', category: 'Display', drawingIds: ['roof'] },
   { key: 'showRise', label: 'Show rise dimension', type: 'boolean', category: 'Display', drawingIds: ['roof'] },
   { key: 'showPitchArc', label: 'Show pitch arc', type: 'boolean', category: 'Display', drawingIds: ['roof'] },
+  { key: 'showGutter', label: 'Show gutter', type: 'boolean', category: 'Display', drawingIds: ['DRF-001','DRF-006'] },
 
   // Panel toggles (Full Elevation)
   { key: 'panel1Enabled', label: 'Show Wall Section panel', type: 'boolean', category: 'Panels', drawingIds: ['DRF-002'] },

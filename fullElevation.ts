@@ -1,9 +1,53 @@
 // ── Full Elevation Assembly — AS1100 Standard ──
-// NOW EDITABLE: accepts DrawingParams for panel toggles and dimensions
+// FIXED: Layout recalculated so notes & dimensions fit inside frame
 // Three-panel detail elevation showing the complete attached structure
 
-import { type DrawingInfo } from './drawingFrame';
 import type { DrawingParams } from './drawingParams';
+// ── Inline DrawingFrame (self-contained) ──
+interface DrawingInfo {
+  title: string;
+  drawingNo: string;
+  scale: string;
+  date: string;
+  revision: string;
+  material: string;
+  sheet: string;
+}
+
+const _mono = 'DM Mono,monospace';
+const _frameCol = '#4a4a4a';
+const _dimCol = '#6b7090';
+const _textCol = '#c8cce0';
+
+function generateDrawingFrame(info: DrawingInfo): string {
+  const w = 420, h = 297, border = 12, tbH = 50;
+  const tbX = w - border - 200;
+  const tbY = h - border - tbH;
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" style="background:transparent;max-width:100%;">`;
+  svg += `<rect x="0" y="0" width="${w}" height="${h}" fill="none" stroke="${_frameCol}" stroke-width="1"/>`;
+  svg += `<rect x="${border}" y="${border}" width="${w - border * 2}" height="${h - border * 2 - tbH}" fill="none" stroke="${_frameCol}" stroke-width="0.5"/>`;
+  svg += `<rect x="${tbX}" y="${tbY}" width="200" height="${tbH}" fill="none" stroke="${_frameCol}" stroke-width="0.5"/>`;
+  svg += `<line x1="${tbX}" y1="${tbY + 16}" x2="${tbX + 200}" y2="${tbY + 16}" stroke="${_frameCol}" stroke-width="0.3"/>`;
+  svg += `<line x1="${tbX + 100}" y1="${tbY}" x2="${tbX + 100}" y2="${tbY + 16}" stroke="${_frameCol}" stroke-width="0.3"/>`;
+  svg += `<line x1="${tbX + 50}" y1="${tbY + 16}" x2="${tbX + 50}" y2="${tbY + tbH}" stroke="${_frameCol}" stroke-width="0.3"/>`;
+  svg += `<line x1="${tbX + 150}" y1="${tbY + 16}" x2="${tbX + 150}" y2="${tbY + tbH}" stroke="${_frameCol}" stroke-width="0.3"/>`;
+  svg += `<text x="${tbX + 100}" y="${tbY + 12}" text-anchor="middle" fill="${_textCol}" font-family="${_mono}" font-size="10" font-weight="bold">${info.title}</text>`;
+  svg += `<text x="${tbX + 25}" y="${tbY + 28}" text-anchor="middle" fill="${_dimCol}" font-family="${_mono}" font-size="7">DRAWING NO</text>`;
+  svg += `<text x="${tbX + 25}" y="${tbY + 40}" text-anchor="middle" fill="${_textCol}" font-family="${_mono}" font-size="8" font-weight="bold">${info.drawingNo}</text>`;
+  svg += `<text x="${tbX + 75}" y="${tbY + 28}" text-anchor="middle" fill="${_dimCol}" font-family="${_mono}" font-size="7">SCALE</text>`;
+  svg += `<text x="${tbX + 75}" y="${tbY + 40}" text-anchor="middle" fill="${_textCol}" font-family="${_mono}" font-size="8" font-weight="bold">${info.scale}</text>`;
+  svg += `<text x="${tbX + 125}" y="${tbY + 28}" text-anchor="middle" fill="${_dimCol}" font-family="${_mono}" font-size="7">DATE</text>`;
+  svg += `<text x="${tbX + 125}" y="${tbY + 40}" text-anchor="middle" fill="${_textCol}" font-family="${_mono}" font-size="8" font-weight="bold">${info.date}</text>`;
+  svg += `<text x="${tbX + 175}" y="${tbY + 28}" text-anchor="middle" fill="${_dimCol}" font-family="${_mono}" font-size="7">MATERIAL</text>`;
+  svg += `<text x="${tbX + 175}" y="${tbY + 40}" text-anchor="middle" fill="${_textCol}" font-family="${_mono}" font-size="8">${info.material}</text>`;
+  svg += `<text x="${tbX + 50}" y="${tbY + 52}" text-anchor="middle" fill="${_dimCol}" font-family="${_mono}" font-size="7">SHEET</text>`;
+  svg += `<text x="${tbX + 50}" y="${tbY + 64}" text-anchor="middle" fill="${_textCol}" font-family="${_mono}" font-size="8">${info.sheet}</text>`;
+  svg += `<text x="${tbX + 125}" y="${tbY + 52}" text-anchor="middle" fill="${_dimCol}" font-family="${_mono}" font-size="7">PROJECT</text>`;
+  svg += `<text x="${tbX + 125}" y="${tbY + 64}" text-anchor="middle" fill="${_textCol}" font-family="${_mono}" font-size="8">Draftly</text>`;
+  return svg;
+}
+
+
 
 const mono = 'DM Mono,monospace';
 const C_DIM = '#8a8e9e';
@@ -24,8 +68,9 @@ const C_BOLTS = '#f44336';
 
 const T = 1.2, M = 0.6, F = 0.3;
 
+// ── FIXED FRAME DIMENSIONS ──
 const WFRAME_W = 900;
-const WFRAME_H = 480;
+const WFRAME_H = 540;        // ↑ was 480 — increased so notes fit
 const WBIND = 30;
 const WBORDER = 12;
 const WTB_H = 55;
@@ -106,9 +151,9 @@ function dimV(x1: number, y1: number, x2: number, y2: number, label: string, off
 
 function callout(x: number, y: number, text: string, lx: number, ly: number): string {
   let s = `<line x1="${lx}" y1="${ly}" x2="${x}" y2="${y}" stroke="${C_DIM}" stroke-width="${F}"/>`;
-  const w = text.length * 5 + 10;
-  s += `<rect x="${x - w / 2}" y="${y - 6}" width="${w}" height="12" rx="2" fill="rgba(30,30,40,0.85)" stroke="${C_DIM}" stroke-width="${F}"/>`;
-  s += `<text x="${x}" y="${y + 3}" text-anchor="middle" fill="${C_TEXT}" font-family="${mono}" font-size="8">${text}</text>`;
+  const w = text.length * 5.5 + 14;
+  s += `<rect x="${x - w / 2}" y="${y - 7}" width="${w}" height="14" rx="2" fill="rgba(30,30,40,0.85)" stroke="${C_DIM}" stroke-width="${F}"/>`;
+  s += `<text x="${x}" y="${y + 4}" text-anchor="middle" fill="${C_TEXT}" font-family="${mono}" font-size="8">${text}</text>`;
   return s;
 }
 
@@ -120,21 +165,22 @@ function hatch(x: number, y: number, w: number, h: number, sp = 5, col: string):
 
 function drawWallSection(px: number, py: number, pw: number, ph: number): string {
   let s = '';
-  const sc = 0.5;
-  const gy = py + ph - 20;
+  const sc = 0.45; // slightly smaller scale to fit
+  const gy = py + ph - 18;
 
+  // Ground line
   s += `<line x1="${px}" y1="${gy}" x2="${px + pw}" y2="${gy}" stroke="${C_TEXT}" stroke-width="${T}" stroke-dasharray="4,3"/>`;
-  s += hatch(px, gy - 6, pw, 6, 3, C_TEXT);
-  s += `<text x="${px + pw - 5}" y="${gy + 12}" text-anchor="end" fill="${C_TEXT}" font-family="${mono}" font-size="8">GROUND</text>`;
+  s += hatch(px, gy - 5, pw, 5, 3, C_TEXT);
+  s += `<text x="${px + pw - 5}" y="${gy + 11}" text-anchor="end" fill="${C_TEXT}" font-family="${mono}" font-size="8">GROUND</text>`;
 
-  const by1 = gy - 350 * sc;
+  const by1 = gy - 320 * sc;
   const by2 = gy;
 
-  const bx = px + 30;
+  const bx = px + 25;
   const bt = 110 * sc;
   s += `<rect x="${bx}" y="${by1}" width="${bt}" height="${by2 - by1}" fill="${C_BRICK_FILL}" stroke="${C_BRICK}" stroke-width="${T}"/>`;
   s += hatch(bx, by1, bt, by2 - by1, 4, C_BRICK);
-  s += callout(bx - 25, by1 + 60, '110mm BRICK', bx, by1 + 60);
+  s += callout(bx - 22, by1 + 55, '110mm BRICK', bx, by1 + 55);
 
   const cx = bx + bt;
   const cw = 50 * sc;
@@ -167,9 +213,11 @@ function drawWallSection(px: number, py: number, pw: number, ph: number): string
   s += `<rect x="${fx}" y="${fy - ft}" width="${fo + bt + 5 * sc}" height="${ft}" fill="${C_FASCIA_FILL}" stroke="${C_FASCIA}" stroke-width="${T}"/>`;
   s += hatch(fx, fy - ft, fo + bt + 5 * sc, ft, 2, C_FASCIA);
 
+  // ── GUTTER PROFILE (fixed shape) ──
   const gpx = fx - 85 * sc;
   const gpy = fy - ft - 8 * sc;
   s += `<path d="M ${gpx} ${gpy + 20 * sc} L ${gpx} ${gpy} Q ${gpx + 3 * sc} ${gpy - 1.5 * sc} ${gpx + 6 * sc} ${gpy} L ${fx + 2 * sc} ${gpy + 5 * sc} Q ${fx + 3 * sc} ${gpy + 7 * sc} ${fx + 3 * sc} ${gpy + 20 * sc} L ${fx + 1.5 * sc} ${gpy + 20 * sc} L ${fx + 1.5 * sc} ${gpy + 17 * sc} L ${gpx + 3 * sc} ${gpy + 17 * sc} L ${gpx + 3 * sc} ${gpy + 20 * sc} Z" fill="${C_GUTTER_FILL}" stroke="${C_GUTTER}" stroke-width="${T}"/>`;
+  s += callout(gpx + 30, gpy - 8, 'Colorbond Gutter', gpx + 20, gpy);
 
   const shsS = 65 * sc;
   const shx = fx + (fo + bt) / 2 - shsS / 2;
@@ -182,23 +230,24 @@ function drawWallSection(px: number, py: number, pw: number, ph: number): string
   s += `<text x="${shx + shsS + 35}" y="${shy1 + 22}" text-anchor="middle" fill="${C_NEW}" font-family="${mono}" font-size="8" font-weight="bold">NEW WORK</text>`;
   s += `<text x="${shx + shsS + 35}" y="${shy1 + 32}" text-anchor="middle" fill="${C_NEW}" font-family="${mono}" font-size="8">65x65 SHS</text>`;
 
-  s += `<text x="${px + 5}" y="${py + 15}" fill="${C_TEXT}" font-family="${mono}" font-size="10" font-weight="bold">SECT A-A</text>`;
+  s += `<text x="${px + 5}" y="${py + 14}" fill="${C_TEXT}" font-family="${mono}" font-size="10" font-weight="bold">SECT A-A</text>`;
 
-  s += dimH(bx, gy + 8, bx + bt, gy + 8, '110', 6);
-  s += dimH(bx + bt, gy + 8, bx + bt + cw, gy + 8, '50', 6);
-  s += dimH(sx, gy + 16, sx + sw, gy + 16, '90', 6);
+  // Dimensions — moved to bottom so they don't overlap with drawing
+  s += dimH(bx, gy + 6, bx + bt, gy + 6, '110', 6);
+  s += dimH(bx + bt, gy + 6, bx + bt + cw, gy + 6, '50', 6);
+  s += dimH(sx, gy + 14, sx + sw, gy + 14, '90', 6);
 
   return s;
 }
 
 function drawSocketJoint(px: number, py: number, pw: number, ph: number): string {
   let s = '';
-  const sc = 0.5;
+  const sc = 0.45;
   const cx = px + pw / 2;
 
-  const gy = py + ph - 20;
+  const gy = py + ph - 18;
   s += `<line x1="${px}" y1="${gy}" x2="${px + pw}" y2="${gy}" stroke="${C_TEXT}" stroke-width="${T}" stroke-dasharray="4,3"/>`;
-  s += hatch(px, gy - 6, pw, 6, 3, C_TEXT);
+  s += hatch(px, gy - 5, pw, 5, 3, C_TEXT);
 
   const shsS = 65 * sc;
   const shx = cx - shsS / 2;
@@ -229,7 +278,6 @@ function drawSocketJoint(px: number, py: number, pw: number, ph: number): string
 
   const cd = 250 * sc;
   const cb = 65 * sc;
-  const ct = 2.4 * sc;
   const rax = stubX - cd / 2;
   const ray = stubY - stubS - pkH - 5 * sc;
   s += `<rect x="${rax}" y="${ray}" width="${cd}" height="${cb}" fill="${C_CSECTION_FILL}" stroke="${C_CSECTION}" stroke-width="${T}"/>`;
@@ -252,25 +300,25 @@ function drawSocketJoint(px: number, py: number, pw: number, ph: number): string
   s += dimV(shx + shsS + 8, shy1, shx + shsS + 8, shy2, 'HEIGHT', 25);
   s += dimH(rax, ray - 12 * sc - 8, rax + cd, ray - 12 * sc - 8, '250', 6);
 
-  s += `<text x="${px + 5}" y="${py + 15}" fill="${C_TEXT}" font-family="${mono}" font-size="10" font-weight="bold">SECT B-B</text>`;
+  s += `<text x="${px + 5}" y="${py + 14}" fill="${C_TEXT}" font-family="${mono}" font-size="10" font-weight="bold">SECT B-B</text>`;
 
   return s;
 }
 
 function drawCornerPost(px: number, py: number, pw: number, ph: number): string {
   let s = '';
-  const sc = 0.5;
+  const sc = 0.45;
   const cx = px + pw / 2;
 
-  const gy = py + ph - 20;
+  const gy = py + ph - 18;
   s += `<line x1="${px}" y1="${gy}" x2="${px + pw}" y2="${gy}" stroke="${C_TEXT}" stroke-width="${T}" stroke-dasharray="4,3"/>`;
-  s += hatch(px, gy - 6, pw, 6, 3, C_TEXT);
+  s += hatch(px, gy - 5, pw, 5, 3, C_TEXT);
 
   const fw = 200 * sc;
   const fh = 40 * sc;
   s += `<rect x="${cx - fw / 2}" y="${gy}" width="${fw}" height="${fh}" fill="none" stroke="#888" stroke-width="${M}"/>`;
   s += hatch(cx - fw / 2, gy, fw, fh, 3, '#888');
-  s += `<text x="${cx}" y="${gy + fh + 12}" text-anchor="middle" fill="#888" font-family="${mono}" font-size="8">400x400x300 CONC PAD</text>`;
+  s += `<text x="${cx}" y="${gy + fh + 11}" text-anchor="middle" fill="#888" font-family="${mono}" font-size="8">400x400x300 CONC PAD</text>`;
 
   const bpW = 120 * sc;
   const bpH = 8 * sc;
@@ -305,9 +353,9 @@ function drawCornerPost(px: number, py: number, pw: number, ph: number): string 
   s += `<line x1="${cx - rafterB / 2 + rafterB * 0.15}" y1="${rafterY + rafterD / 2}" x2="${cx + rafterB / 2 - rafterB * 0.15}" y2="${rafterY + rafterD / 2}" stroke="${C_CSECTION}" stroke-width="${M}" stroke-dasharray="3,2"/>`;
 
   s += `<path d="M ${cx - 20} ${rafterY + rafterD + 5} L ${cx - 10} ${rafterY + rafterD + 15} L ${cx + 10} ${rafterY + rafterD + 15} L ${cx + 20} ${rafterY + rafterD + 5}" fill="${C_PLATE_FILL}" stroke="${C_PLATE}" stroke-width="${T}"/>`;
-  s += `<text x="${cx}" y="${rafterY + rafterD + 25}" text-anchor="middle" fill="${C_PLATE}" font-family="${mono}" font-size="7">BRACKET</text>`;
+  s += `<text x="${cx}" y="${rafterY + rafterD + 24}" text-anchor="middle" fill="${C_PLATE}" font-family="${mono}" font-size="7">BRACKET</text>`;
 
-  s += `<text x="${px + 5}" y="${py + 15}" fill="${C_TEXT}" font-family="${mono}" font-size="10" font-weight="bold">SECT C-C</text>`;
+  s += `<text x="${px + 5}" y="${py + 14}" fill="${C_TEXT}" font-family="${mono}" font-size="10" font-weight="bold">SECT C-C</text>`;
 
   s += dimV(cx - postB / 2 - 15, postY, cx - postB / 2 - 15, bpY, '100', 12);
   s += dimH(cx - postB / 2, gy + 10, cx + postB / 2, gy + 10, '50', 6);
@@ -335,11 +383,11 @@ export function generateFullElevationSVG(params?: DrawingParams): string {
 
   const wx = WBIND, wy = WBORDER;
   const ww = WFRAME_W - WBIND - WBORDER;
-  const wh = WFRAME_H - WBORDER - WTB_H;
-  const gap = 18;
+  const wh = WFRAME_H - WBORDER - WTB_H - WBORDER; // inner drawing height
+  const gap = 16;
   const panelW = (ww - gap * 2) / 3;
-  const panelH = wh - 40;
-  const panelY = wy + 12;
+  const panelH = wh - 110; // ← FIXED: leave 110px at bottom for notes
+  const panelY = wy + 10;
 
   const sep1 = wx + panelW;
   const sep2 = wx + panelW * 2 + gap;
@@ -350,18 +398,24 @@ export function generateFullElevationSVG(params?: DrawingParams): string {
   if (showP2) svg += drawSocketJoint(wx + panelW + gap, panelY, panelW, panelH);
   if (showP3) svg += drawCornerPost(wx + panelW * 2 + gap * 2, panelY, panelW, panelH);
 
+  // ── NOTES SECTION — recalculated to fit inside frame ──
   const tx = wx;
-  const ty = panelY + panelH + 8;
-  svg += `<rect x="${tx}" y="${ty}" width="${ww}" height="50" rx="3" fill="rgba(30,30,40,0.7)" stroke="${dimCol}" stroke-width="${F}"/>`;
-  svg += `<text x="${tx + 5}" y="${ty + 12}" fill="${C_TEXT}" font-family="${mono}" font-size="9" font-weight="bold">SECTION REFERENCES</text>`;
-  svg += `<text x="${tx + 5}" y="${ty + 26}" fill="${C_TEXT}" font-family="${mono}" font-size="7">A-A Existing dwelling wall at eave — 65x65 SHS standoff, M12x100 lag screws @ 600 ctr into top plate</text>`;
-  svg += `<text x="${tx + 5}" y="${ty + 38}" fill="${C_TEXT}" font-family="${mono}" font-size="7">B-B Socket joint at rafter — 50x50x4 SHS stub + 50x5 packers, C250x65x2.4 rafter slips over, 4x M10 FHCS ea side</text>`;
-  svg += `<text x="${tx + 5}" y="${ty + 50}" fill="${C_TEXT}" font-family="${mono}" font-size="7">C-C Corner post base — C100x50x1.6 post on 150x150x8 base plate, 4x M16 chem anchors into 400x400x300 conc pad</text>`;
+  const ty = panelY + panelH + 6;
+  const noteH = 46;
+  const noteW = ww;
 
-  svg += `<rect x="${tx}" y="${ty + 55}" width="${ww}" height="42" rx="3" fill="rgba(30,30,40,0.7)" stroke="${dimCol}" stroke-width="${F}"/>`;
-  svg += `<text x="${tx + 5}" y="${ty + 67}" fill="${C_TEXT}" font-family="${mono}" font-size="9" font-weight="bold">NOTES</text>`;
-  svg += `<text x="${tx + 5}" y="${ty + 81}" fill="${C_TEXT}" font-family="${mono}" font-size="7">• All structural steel to AS1163 Grade C350, galvanized to AS4680</text>`;
-  svg += `<text x="${tx + 5}" y="${ty + 93}" fill="${C_TEXT}" font-family="${mono}" font-size="7">• All dimensions in millimetres unless noted — see DRF-001-SEC-A for full wall detail</text>`;
+  svg += `<rect x="${tx}" y="${ty}" width="${noteW}" height="${noteH}" rx="3" fill="rgba(30,30,40,0.7)" stroke="${dimCol}" stroke-width="${F}"/>`;
+  svg += `<text x="${tx + 5}" y="${ty + 12}" fill="${C_TEXT}" font-family="${mono}" font-size="9" font-weight="bold">SECTION REFERENCES</text>`;
+  svg += `<text x="${tx + 5}" y="${ty + 24}" fill="${C_TEXT}" font-family="${mono}" font-size="7">A-A Existing dwelling wall at eave — 65x65 SHS standoff, M12x100 lag screws @ 600 ctr into top plate</text>`;
+  svg += `<text x="${tx + 5}" y="${ty + 36}" fill="${C_TEXT}" font-family="${mono}" font-size="7">B-B Socket joint at rafter — 50x50x4 SHS stub + 50x5 packers, C250x65x2.4 rafter slips over, 4x M10 FHCS ea side</text>`;
+  svg += `<text x="${tx + 5}" y="${ty + 46}" fill="${C_TEXT}" font-family="${mono}" font-size="7">C-C Corner post base — C100x50x1.6 post on 150x150x8 base plate, 4x M16 chem anchors into 400x400x300 conc pad</text>`;
+
+  const ny = ty + noteH + 4;
+  const nh = 38;
+  svg += `<rect x="${tx}" y="${ny}" width="${noteW}" height="${nh}" rx="3" fill="rgba(30,30,40,0.7)" stroke="${dimCol}" stroke-width="${F}"/>`;
+  svg += `<text x="${tx + 5}" y="${ny + 12}" fill="${C_TEXT}" font-family="${mono}" font-size="9" font-weight="bold">NOTES</text>`;
+  svg += `<text x="${tx + 5}" y="${ny + 24}" fill="${C_TEXT}" font-family="${mono}" font-size="7">• All structural steel to AS1163 Grade C350, galvanized to AS4680</text>`;
+  svg += `<text x="${tx + 5}" y="${ny + 36}" fill="${C_TEXT}" font-family="${mono}" font-size="7">• All dimensions in millimetres unless noted — see DRF-001-SEC-A for full wall detail</text>`;
 
   svg += '</svg>';
   return svg;

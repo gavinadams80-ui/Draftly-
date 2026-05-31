@@ -1,9 +1,9 @@
 // ── Building Layout & Roof Geometry Drawing Engine ──
-// NOW EDITABLE: accepts DrawingParams for display toggles
+// V3: BRICK WALL dimensions input, auto-calculated clear span, unlimited offsets
 
 import type { DrawingParams } from './drawingParams';
 
-// ── Roof Geometry Diagram ("Y diagram") ──
+// ── Roof Geometry Diagram ──
 export function generateRoofGeometrySVG(
   span: number,
   pitch: number,
@@ -120,9 +120,11 @@ export function generateRoofGeometrySVG(
 }
 
 // ── Building Plan View ──
+// V3: width/depth = BRICK WALL dimensions. Structure auto-inset by (standoff + fascia).
+// Offset = 0 to full depth (how much of the side is NOT covered by house wall).
 export function generateBuildingPlanSVG(
-  width: number,
-  depth: number,
+  brickWidth: number,      // ← BRICK WALL dimension from site measure
+  brickDepth: number,       // ← BRICK WALL dimension from site measure
   _height: number,
   _pitch: number,
   attachment: string,
@@ -137,158 +139,360 @@ export function generateBuildingPlanSVG(
   const showPosts = p.showPosts !== false;
   const showLabels = p.showLabels !== false;
 
-  const W = 560, H = 420;
-  const margin = { top: 40, right: 40, bottom: 55, left: 55 };
+  // Attachment configuration
+  const attachBack = p.attachBack !== false;
+  const attachLeft = p.attachLeft !== false;
+  const attachRight = p.attachRight !== false;
+  const attachFront = p.attachFront === true;
+  const rightOffsetMm = p.rightOffsetMm || 0;
+  const leftOffsetMm = p.leftOffsetMm || 0;
+  const backOffsetMm = p.backOffsetMm || 0;
+
+  // ── CRITICAL: Calculate total inset from brick wall ──
+  // Structure sits (standoff + fascia thickness) IN from brick wall face on each attached side
+  const standoffMm = p.standoffMm || 150;
+  const fasciaMm = p.fasciaThickness || 30;
+  const totalInsetMm = standoffMm + fasciaMm;  // e.g. 150 + 30 = 180mm
+  const totalInsetM = totalInsetMm / 1000;
+
+  // ── Calculate CLEAR SPAN (actual structure dimensions) ──
+  // These are the dimensions the engineering uses for rafters, purlins, etc.
+  const structWidth = brickWidth
+    - (attachLeft ? totalInsetM : 0)
+    - (attachRight ? totalInsetM : 0);
+  const structDepth = brickDepth
+    - (attachBack ? totalInsetM : 0)
+    - (attachFront ? totalInsetM : 0);
+
+  // Ensure non-negative
+  const safeStructWidth = Math.max(structWidth, 0.5);
+  const safeStructDepth = Math.max(structDepth, 0.5);
+
+  const W = 640, H = 520;
+  const margin = { top: 55, right: 55, bottom: 80, left: 80 };
   const drawW = W - margin.left - margin.right;
   const drawH = H - margin.top - margin.bottom;
 
-  const houseDepth = depth + 2.0;
-  const houseLeftWidth = width * 0.4;
-  const houseRightInset = 1.8;
+  // Scale based on BRICK WALL dimensions (the outer envelope)
+  const totalW = brickWidth + 3.0;
+  const totalD = brickDepth + 2.5;
+  const sc = Math.min(drawW / totalW, drawH / totalD) * 0.85;
 
-  const totalW = width + houseLeftWidth + standoff + 1.0;
-  const totalD = houseDepth + standoff + 1.0;
+  const brickW_px = brickWidth * sc;
+  const brickD_px = brickDepth * sc;
+  const structW_px = safeStructWidth * sc;
+  const structD_px = safeStructDepth * sc;
 
-  const sc = Math.min(drawW / totalW, drawH / totalD) * 0.88;
-  const so = standoff * sc;
+  // Position brick wall
+  const brickX = margin.left + 1.5 * sc;
+  const brickY = margin.top + 1.0 * sc;
 
-  const structW = width * sc;
-  const structD = depth * sc;
-  const structX = margin.left + houseLeftWidth * sc + so;
-  const structY = margin.top + (houseDepth - depth) * sc + so;
-
-  const hL = margin.left;
-  const hR = margin.left + (houseLeftWidth + width) * sc + so;
-  const hT = margin.top;
-  const hB = margin.top + houseDepth * sc + so;
-  const hStopY = hB - houseRightInset * sc;
+  // Structure is inset inside brick wall
+  const structX = brickX + (attachLeft ? totalInsetM * sc : 0);
+  const structY = brickY + (attachBack ? totalInsetM * sc : 0);
 
   const dimCol = '#6b7090';
   const houseCol = '#888';
-  const houseFill = 'rgba(136,136,136,0.08)';
+  const houseFill = 'rgba(136,136,136,0.06)';
+  const houseWallFill = 'rgba(136,136,136,0.12)';
   const structCol = '#c9a84c';
-  const structFill = 'rgba(201,168,76,0.06)';
+  const structFill = 'rgba(201,168,76,0.08)';
   const postCol = '#8bc34a';
+  const connCol = '#2196f3';
   const rafterCol = '#c9a84c';
   const textCol = '#c8cce0';
-  const standoffCol = '#2196f3';
+  const insetCol = '#ff9800';
   const mono = 'DM Mono,monospace';
 
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" style="background:transparent;max-width:100%;">`;
 
-  const attachLabel = attachment === 'three-side' ? '3-SIDE ATTACHED' : attachment === 'attached' ? 'ATTACHED' : 'FREESTANDING';
-  svg += `<text x="${W / 2}" y="22" text-anchor="middle" fill="${textCol}" font-family="${mono}" font-size="12" font-weight="bold">PLAN VIEW · ${attachLabel} · ${width.toFixed(2)}m × ${depth.toFixed(2)}m · ${(standoff * 1000).toFixed(0)}mm standoff</text>`;
+  // Title
+  const attachLabel = attachBack && attachLeft && attachRight ? '3-SIDE ATTACHED' :
+                       attachBack && attachLeft ? '2-SIDE (Back+Left)' :
+                       attachBack && attachRight ? '2-SIDE (Back+Right)' :
+                       attachBack ? 'BACK ATTACHED' :
+                       attachLeft ? 'LEFT ATTACHED' :
+                       attachRight ? 'RIGHT ATTACHED' : 'FREESTANDING';
+  svg += `<text x="${W / 2}" y="24" text-anchor="middle" fill="${textCol}" font-family="${mono}" font-size="12" font-weight="bold">PLAN VIEW · ${attachLabel}</text>`;
+  svg += `<text x="${W / 2}" y="40" text-anchor="middle" fill="${dimCol}" font-family="${mono}" font-size="9">Brick Wall: ${brickWidth.toFixed(2)}m × ${brickDepth.toFixed(2)}m · Clear Span: ${safeStructWidth.toFixed(3)}m × ${safeStructDepth.toFixed(3)}m</text>`;
 
-  // House walls
-  if (attachment === 'three-side') {
-    svg += `<line x1="${hL}" y1="${hT}" x2="${hL}" y2="${hB}" stroke="${houseCol}" stroke-width="2"/>`;
-    svg += `<line x1="${hL}" y1="${hT}" x2="${hR}" y2="${hT}" stroke="${houseCol}" stroke-width="2"/>`;
-    svg += `<line x1="${hR}" y1="${hT}" x2="${hR}" y2="${hStopY}" stroke="${houseCol}" stroke-width="2"/>`;
-    if (showLabels) {
-      svg += `<text x="${hL + 20}" y="${hT + 30}" fill="${houseCol}" font-family="${mono}" font-size="10">EXISTING</text>`;
-      svg += `<text x="${hL + 20}" y="${hT + 44}" fill="${houseCol}" font-family="${mono}" font-size="10">DWELLING</text>`;
-      svg += `<text x="${hR + 5}" y="${hStopY + 15}" fill="${houseCol}" font-family="${mono}" font-size="8">gap</text>`;
-      svg += `<text x="${hR + 5}" y="${hStopY + 27}" fill="${houseCol}" font-family="${mono}" font-size="8">${houseRightInset.toFixed(1)}m</text>`;
-    }
-    if (showDims) {
-      svg += `<line x1="${hL}" y1="${structY - 8}" x2="${structX}" y2="${structY - 8}" stroke="${standoffCol}" stroke-width="0.5" stroke-dasharray="3,2"/>`;
-      svg += `<text x="${(hL + structX) / 2}" y="${structY - 12}" text-anchor="middle" fill="${standoffCol}" font-family="${mono}" font-size="8">${(standoff * 1000).toFixed(0)}mm</text>`;
-      svg += `<line x1="${structX - 8}" y1="${hT}" x2="${structX - 8}" y2="${structY}" stroke="${standoffCol}" stroke-width="0.5" stroke-dasharray="3,2"/>`;
-      svg += `<text x="${structX - 12}" y="${(hT + structY) / 2}" text-anchor="end" fill="${standoffCol}" font-family="${mono}" font-size="8" transform="rotate(-90 ${structX - 12} ${(hT + structY) / 2})">${(standoff * 1000).toFixed(0)}mm</text>`;
-    }
-  } else if (attachment === 'attached') {
-    svg += `<line x1="${hL}" y1="${hT}" x2="${hR}" y2="${hT}" stroke="${houseCol}" stroke-width="2"/>`;
-    if (showLabels) svg += `<text x="${hL + 20}" y="${hT - 10}" fill="${houseCol}" font-family="${mono}" font-size="10">EXISTING DWELLING</text>`;
-  } else {
-    svg += `<rect x="${hL + 50}" y="${hT + 50}" width="${80 * sc}" height="${60 * sc}" fill="${houseFill}" stroke="${houseCol}" stroke-width="1"/>`;
-    if (showLabels) svg += `<text x="${hL + 50 + 40 * sc}" y="${hT + 50 + 30 * sc}" text-anchor="middle" fill="${houseCol}" font-family="${mono}" font-size="8">HOUSE</text>`;
+  // ── BRICK WALL OUTLINE (measured on site) ──
+  // Draw as light dotted rectangle showing the full measured envelope
+  svg += `<rect x="${brickX}" y="${brickY}" width="${brickW_px}" height="${brickD_px}" fill="${houseFill}" stroke="${houseCol}" stroke-width="1" stroke-dasharray="6,3"/>`;
+  if (showLabels) {
+    svg += `<text x="${brickX + 10}" y="${brickY + 16}" fill="${houseCol}" font-family="${mono}" font-size="8">BRICK WALL ENVELOPE</text>`;
+    svg += `<text x="${brickX + 10}" y="${brickY + 28}" fill="${houseCol}" font-family="${mono}" font-size="7">(site measure)</text>`;
   }
 
-  // Structure footprint
-  svg += `<rect x="${structX}" y="${structY}" width="${structW}" height="${structD}" fill="${structFill}" stroke="${structCol}" stroke-width="2" stroke-dasharray="4,2"/>`;
-  svg += `<rect x="${structX + 2}" y="${structY + 2}" width="${structW - 4}" height="${structD - 4}" fill="none" stroke="${structCol}" stroke-width="0.5" stroke-dasharray="2,2"/>`;
+  // ── INSET DIMENSION LINES (showing standoff + fascia) ──
+  if (showDims && (attachBack || attachLeft || attachRight || attachFront)) {
+    const insetText = `${totalInsetMm}mm inset`;
+    if (attachBack) {
+      svg += `<line x1="${brickX}" y1="${brickY + totalInsetM * sc / 2}" x2="${brickX + brickW_px}" y2="${brickY + totalInsetM * sc / 2}" stroke="${insetCol}" stroke-width="0.3" stroke-dasharray="2,2"/>`;
+      svg += `<text x="${brickX + brickW_px + 4}" y="${brickY + totalInsetM * sc / 2 + 3}" fill="${insetCol}" font-family="${mono}" font-size="7">${insetText}</text>`;
+    }
+    if (attachLeft) {
+      svg += `<line x1="${brickX + totalInsetM * sc / 2}" y1="${brickY}" x2="${brickX + totalInsetM * sc /  2}" y2="${brickY + brickD_px}" stroke="${insetCol}" stroke-width="0.3" stroke-dasharray="2,2"/>`;
+      svg += `<text x="${brickX + totalInsetM * sc / 2}" y="${brickY - 4}" text-anchor="middle" fill="${insetCol}" font-family="${mono}" font-size="7">${insetText}</text>`;
+    }
+  }
 
-  // Portal frame lines
-  const frameSpacing = structD / (portalFrameCount - 1);
+  // ── HOUSE WALLS (solid lines on attached sides) ──
+  // Back wall
+  if (attachBack) {
+    const backOffsetPx = (backOffsetMm / 1000) * sc;
+    const wallStartY = brickY;
+    const wallEndY = brickY + brickD_px - backOffsetPx;
+    svg += `<line x1="${brickX}" y1="${wallStartY}" x2="${brickX + brickW_px}" y2="${wallStartY}" stroke="${houseCol}" stroke-width="3"/>`;
+    svg += `<rect x="${brickX}" y="${wallStartY}" width="${brickW_px}" height="${Math.max(totalInsetM * sc, 6)}" fill="${houseWallFill}" stroke="none"/>`;
+    if (backOffsetPx > 2) {
+      svg += `<line x1="${brickX + brickW_px - 20}" y1="${wallEndY}" x2="${brickX + brickW_px}" y2="${wallEndY}" stroke="${houseCol}" stroke-width="3"/>`;
+      svg += `<line x1="${brickX}" y1="${wallEndY}" x2="${brickX + 20}" y2="${wallEndY}" stroke="${houseCol}" stroke-width="3"/>`;
+      // Offset indicator
+      svg += `<line x1="${brickX + brickW_px + 12}" y1="${wallEndY}" x2="${brickX + brickW_px + 12}" y2="${brickY + brickD_px}" stroke="#f44336" stroke-width="0.5" stroke-dasharray="3,2"/>`;
+      svg += `<text x="${brickX + brickW_px + 16}" y="${(wallEndY + brickY + brickD_px) / 2 + 3}" fill="#f44336" font-family="${mono}" font-size="8" font-weight="bold" transform="rotate(90 ${brickX + brickW_px + 16} ${(wallEndY + brickY + brickD_px) / 2})">${backOffsetMm}mm</text>`;
+    }
+    if (showLabels) {
+      svg += `<text x="${brickX + brickW_px / 2}" y="${wallStartY - 8}" text-anchor="middle" fill="${houseCol}" font-family="${mono}" font-size="9" font-weight="bold">BACK WALL</text>`;
+    }
+  }
+
+  // Left wall
+  if (attachLeft) {
+    const leftOffsetPx = (leftOffsetMm / 1000) * sc;
+    const wallStartX = brickX;
+    const wallEndX = brickX + brickW_px - leftOffsetPx;
+    svg += `<line x1="${wallStartX}" y1="${brickY}" x2="${wallStartX}" y2="${brickY + brickD_px}" stroke="${houseCol}" stroke-width="3"/>`;
+    svg += `<rect x="${wallStartX}" y="${brickY}" width="${Math.max(totalInsetM * sc, 6)}" height="${brickD_px}" fill="${houseWallFill}" stroke="none"/>`;
+    if (leftOffsetPx > 2) {
+      svg += `<line x1="${wallEndX}" y1="${brickY + brickD_px - 20}" x2="${wallEndX}" y2="${brickY + brickD_px}" stroke="${houseCol}" stroke-width="3"/>`;
+      svg += `<line x1="${wallEndX}" y1="${brickY}" x2="${wallEndX}" y2="${brickY + 20}" stroke="${houseCol}" stroke-width="3"/>`;
+      svg += `<line x1="${wallEndX}" y1="${brickY + brickD_px + 12}" x2="${brickX + brickW_px}" y2="${brickY + brickD_px + 12}" stroke="#f44336" stroke-width="0.5" stroke-dasharray="3,2"/>`;
+      svg += `<text x="${(wallEndX + brickX + brickW_px) / 2}" y="${brickY + brickD_px + 24}" text-anchor="middle" fill="#f44336" font-family="${mono}" font-size="8" font-weight="bold">${leftOffsetMm}mm</text>`;
+    }
+    if (showLabels) {
+      svg += `<text x="${wallStartX - 8}" y="${brickY + brickD_px / 2}" text-anchor="end" fill="${houseCol}" font-family="${mono}" font-size="9" font-weight="bold" transform="rotate(-90 ${wallStartX - 8} ${brickY + brickD_px / 2})">LEFT WALL</text>`;
+    }
+  }
+
+  // Right wall
+  if (attachRight) {
+    const rightOffsetPx = (rightOffsetMm / 1000) * sc;
+    const wallStartX = brickX + brickW_px;
+    const wallEndX = brickX + rightOffsetPx; // offset from left? No, offset from front
+    // Right wall goes from back (brickY) down to (brickY + brickD_px - rightOffsetPx)
+    const wallStopY = brickY + brickD_px - rightOffsetPx;
+    svg += `<line x1="${wallStartX}" y1="${brickY}" x2="${wallStartX}" y2="${wallStopY}" stroke="${houseCol}" stroke-width="3"/>`;
+    svg += `<rect x="${wallStartX - Math.max(totalInsetM * sc, 6)}" y="${brickY}" width="${Math.max(totalInsetM * sc, 6)}" height="${wallStopY - brickY}" fill="${houseWallFill}" stroke="none"/>`;
+    if (rightOffsetPx > 2) {
+      svg += `<line x1="${wallStartX}" y1="${wallStopY}" x2="${wallStartX - 20}" y2="${wallStopY}" stroke="${houseCol}" stroke-width="3"/>`;
+      svg += `<line x1="${wallStartX}" y1="${wallStopY}" x2="${wallStartX}" y2="${wallStopY + 20}" stroke="${houseCol}" stroke-width="3"/>`;
+      // Offset dimension
+      svg += `<line x1="${wallStartX + 12}" y1="${wallStopY}" x2="${wallStartX + 12}" y2="${brickY + brickD_px}" stroke="#f44336" stroke-width="0.5" stroke-dasharray="3,2"/>`;
+      svg += `<line x1="${wallStartX}" y1="${wallStopY}" x2="${wallStartX + 16}" y2="${wallStopY}" stroke="#f44336" stroke-width="0.5"/>`;
+      svg += `<line x1="${wallStartX}" y1="${brickY + brickD_px}" x2="${wallStartX + 16}" y2="${brickY + brickD_px}" stroke="#f44336" stroke-width="0.5"/>`;
+      svg += `<text x="${wallStartX + 18}" y="${(wallStopY + brickY + brickD_px) / 2 + 3}" fill="#f44336" font-family="${mono}" font-size="8" font-weight="bold" transform="rotate(90 ${wallStartX + 18} ${(wallStopY + brickY + brickD_px) / 2})">${rightOffsetMm}mm OFFSET</text>`;
+    }
+    if (showLabels) {
+      svg += `<text x="${wallStartX + 8}" y="${brickY + (wallStopY - brickY) / 2}" text-anchor="start" fill="${houseCol}" font-family="${mono}" font-size="9" font-weight="bold" transform="rotate(90 ${wallStartX + 8} ${brickY + (wallStopY - brickY) / 2})">RIGHT WALL</text>`;
+    }
+  }
+
+  // Front wall
+  if (attachFront) {
+    svg += `<line x1="${brickX}" y1="${brickY + brickD_px}" x2="${brickX + brickW_px}" y2="${brickY + brickD_px}" stroke="${houseCol}" stroke-width="3"/>`;
+    svg += `<rect x="${brickX}" y="${brickY + brickD_px - Math.max(totalInsetM * sc, 6)}" width="${brickW_px}" height="${Math.max(totalInsetM * sc, 6)}" fill="${houseWallFill}" stroke="none"/>`;
+    if (showLabels) {
+      svg += `<text x="${brickX + brickW_px / 2}" y="${brickY + brickD_px + 14}" text-anchor="middle" fill="${houseCol}" font-family="${mono}" font-size="9" font-weight="bold">FRONT WALL</text>`;
+    }
+  }
+
+  // ── STRUCTURE FOOTPRINT (clear span) ──
+  svg += `<rect x="${structX}" y="${structY}" width="${structW_px}" height="${structD_px}" fill="${structFill}" stroke="${structCol}" stroke-width="2.5" stroke-dasharray="5,3"/>`;
+  svg += `<rect x="${structX + 3}" y="${structY + 3}" width="${structW_px - 6}" height="${structD_px - 6}" fill="none" stroke="${structCol}" stroke-width="0.5" stroke-dasharray="2,2"/>`;
+  if (showLabels) {
+    svg += `<text x="${structX + structW_px / 2}" y="${structY + structD_px / 2}" text-anchor="middle" fill="${structCol}" font-family="${mono}" font-size="10" font-weight="bold" opacity="0.4">STRUCTURE</text>`;
+    svg += `<text x="${structX + structW_px / 2}" y="${structY + structD_px / 2 + 12}" text-anchor="middle" fill="${structCol}" font-family="${mono}" font-size="8" opacity="0.4">${safeStructWidth.toFixed(3)}m × ${safeStructDepth.toFixed(3)}m</text>`;
+  }
+
+  // ── PORTAL FRAME LINES (rafters) ──
+  const frameSpacing = structD_px / (portalFrameCount - 1);
   for (let i = 0; i < portalFrameCount; i++) {
     const fy = structY + i * frameSpacing;
-    svg += `<line x1="${structX}" y1="${fy}" x2="${structX + structW}" y2="${fy}" stroke="${rafterCol}" stroke-width="1"/>`;
-    if (showPosts) {
-      const postSize = 4;
-      svg += `<rect x="${structX - postSize / 2}" y="${fy - postSize / 2}" width="${postSize}" height="${postSize}" fill="${postCol}" stroke="${postCol}" stroke-width="1"/>`;
-      if (attachment !== 'three-side' || i * frameSpacing < (depth - houseRightInset) * sc) {
-        svg += `<rect x="${structX + structW - postSize / 2}" y="${fy - postSize / 2}" width="${postSize}" height="${postSize}" fill="${postCol}" stroke="${postCol}" stroke-width="1"/>`;
+    svg += `<line x1="${structX}" y1="${fy}" x2="${structX + structW_px}" y2="${fy}" stroke="${rafterCol}" stroke-width="1.5"/>`;
+    if (showLabels && (i === 0 || i === portalFrameCount - 1)) {
+      svg += `<text x="${structX - 20}" y="${fy + 3}" text-anchor="end" fill="${dimCol}" font-family="${mono}" font-size="8">F${i + 1}</text>`;
+    }
+  }
+
+  // ── POSTS & CONNECTIONS ──
+  const postSize = 10;
+  const postHalf = postSize / 2;
+  const bracketW = 16;
+  const bracketH = 10;
+
+  if (showPosts) {
+    // Determine free corners
+    const backFree = !attachBack;
+    const leftFree = !attachLeft;
+    const rightFree = !attachRight;
+    const frontFree = !attachFront;
+
+    // STANDALONE COLUMNS (only at corners where BOTH adjacent edges are free)
+    // Back-Left corner
+    if (backFree && leftFree) {
+      svg += `<rect x="${structX - postHalf}" y="${structY - postHalf}" width="${postSize}" height="${postSize}" fill="${postCol}" stroke="#fff" stroke-width="1.5"/>`;
+      svg += `<circle cx="${structX}" cy="${structY}" r="14" fill="none" stroke="${postCol}" stroke-width="1" stroke-dasharray="2,2"/>`;
+    }
+    // Back-Right corner
+    if (backFree && rightFree) {
+      svg += `<rect x="${structX + structW_px - postHalf}" y="${structY - postHalf}" width="${postSize}" height="${postSize}" fill="${postCol}" stroke="#fff" stroke-width="1.5"/>`;
+      svg += `<circle cx="${structX + structW_px}" cy="${structY}" r="14" fill="none" stroke="${postCol}" stroke-width="1" stroke-dasharray="2,2"/>`;
+    }
+    // Front-Left corner
+    if (frontFree && leftFree) {
+      svg += `<rect x="${structX - postHalf}" y="${structY + structD_px - postHalf}" width="${postSize}" height="${postSize}" fill="${postCol}" stroke="#fff" stroke-width="1.5"/>`;
+      svg += `<circle cx="${structX}" cy="${structY + structD_px}" r="14" fill="none" stroke="${postCol}" stroke-width="1" stroke-dasharray="2,2"/>`;
+    }
+    // Front-Right corner — THE STANDALONE COLUMN (when right wall is offset)
+    if (frontFree && rightFree) {
+      svg += `<rect x="${structX + structW_px - postHalf}" y="${structY + structD_px - postHalf}" width="${postSize}" height="${postSize}" fill="${postCol}" stroke="#fff" stroke-width="1.5"/>`;
+      svg += `<circle cx="${structX + structW_px}" cy="${structY + structD_px}" r="16" fill="none" stroke="#f44336" stroke-width="1.5" stroke-dasharray="3,2"/>`;
+      if (showLabels) {
+        svg += `<text x="${structX + structW_px + 18}" y="${structY + structD_px + 4}" fill="#f44336" font-family="${mono}" font-size="9" font-weight="bold">STANDALONE COLUMN</text>`;
+        svg += `<text x="${structX + structW_px + 18}" y="${structY + structD_px + 16}" fill="#f44336" font-family="${mono}" font-size="8">concrete pad + base plate</text>`;
       }
     }
-    if (showLabels && (i === 0 || i === portalFrameCount - 1)) {
-      svg += `<text x="${structX - 15}" y="${fy + 3}" text-anchor="end" fill="${dimCol}" font-family="${mono}" font-size="8">F${i + 1}</text>`;
+
+    // FASCIA BRACKETS on attached edges (NOT standalone columns)
+    // Back edge brackets
+    if (attachBack) {
+      for (let i = 0; i < portalFrameCount; i++) {
+        const fx = structX + i * (structW_px / (portalFrameCount - 1));
+        svg += `<rect x="${fx - bracketW / 2}" y="${structY - bracketH}" width="${bracketW}" height="${bracketH}" fill="${connCol}" stroke="#fff" stroke-width="0.5" rx="1"/>`;
+        svg += `<line x1="${fx}" y1="${structY - bracketH}" x2="${fx}" y2="${structY}" stroke="${connCol}" stroke-width="0.5" stroke-dasharray="2,2"/>`;
+      }
+      if (showLabels) {
+        svg += `<text x="${structX + structW_px / 2}" y="${structY - bracketH - 4}" text-anchor="middle" fill="${connCol}" font-family="${mono}" font-size="8" font-weight="bold">FASCIA BRACKETS @ ${standoffMm}mm</text>`;
+      }
+    }
+
+    // Left edge brackets
+    if (attachLeft) {
+      for (let i = 0; i < portalFrameCount; i++) {
+        const fy = structY + i * frameSpacing;
+        svg += `<rect x="${structX - bracketH}" y="${fy - bracketW / 2}" width="${bracketH}" height="${bracketW}" fill="${connCol}" stroke="#fff" stroke-width="0.5" rx="1"/>`;
+        svg += `<line x1="${structX - bracketH}" y1="${fy}" x2="${structX}" y2="${fy}" stroke="${connCol}" stroke-width="0.5" stroke-dasharray="2,2"/>`;
+      }
+      if (showLabels) {
+        svg += `<text x="${structX - bracketH - 4}" y="${structY + structD_px / 2}" text-anchor="end" fill="${connCol}" font-family="${mono}" font-size="8" font-weight="bold" transform="rotate(-90 ${structX - bracketH - 4} ${structY + structD_px / 2})">FASCIA BRACKETS</text>`;
+      }
+    }
+
+    // Right edge brackets (only up to the offset point!)
+    if (attachRight) {
+      const rightWallStopY = brickY + brickD_px - (rightOffsetMm / 1000) * sc;
+      const bracketCount = Math.max(1, Math.floor((rightWallStopY - structY) / frameSpacing));
+      for (let i = 0; i <= bracketCount; i++) {
+        const fy = structY + i * frameSpacing;
+        if (fy <= rightWallStopY + 2) {
+          svg += `<rect x="${structX + structW_px}" y="${fy - bracketW / 2}" width="${bracketH}" height="${bracketW}" fill="${connCol}" stroke="#fff" stroke-width="0.5" rx="1"/>`;
+          svg += `<line x1="${structX + structW_px}" y1="${fy}" x2="${structX + structW_px + bracketH}" y2="${fy}" stroke="${connCol}" stroke-width="0.5" stroke-dasharray="2,2"/>`;
+        }
+      }
+      if (showLabels) {
+        svg += `<text x="${structX + structW_px + bracketH + 4}" y="${(structY + rightWallStopY) / 2}" text-anchor="start" fill="${connCol}" font-family="${mono}" font-size="8" font-weight="bold" transform="rotate(90 ${structX + structW_px + bracketH + 4} ${(structY + rightWallStopY) / 2})">FASCIA BRACKETS</text>`;
+      }
+    }
+
+    // Front edge columns (if front is free)
+    if (frontFree) {
+      for (let i = 0; i < portalFrameCount; i++) {
+        const fx = structX + i * (structW_px / (portalFrameCount - 1));
+        svg += `<rect x="${fx - postHalf}" y="${structY + structD_px - postHalf}" width="${postSize}" height="${postSize}" fill="${postCol}" stroke="#fff" stroke-width="1.5"/>`;
+      }
+      if (showLabels) {
+        svg += `<text x="${structX + structW_px / 2}" y="${structY + structD_px + 18}" text-anchor="middle" fill="${postCol}" font-family="${mono}" font-size="8" font-weight="bold">FRONT COLUMNS</text>`;
+      }
     }
   }
 
-  // Corner column
-  if (attachment === 'three-side') {
-    const cornerX = structX + structW;
-    const cornerY = structY + structD;
-    svg += `<circle cx="${cornerX}" cy="${cornerY}" r="6" fill="none" stroke="#f44336" stroke-width="1.5"/>`;
-    svg += `<line x1="${cornerX - 4}" y1="${cornerY - 4}" x2="${cornerX + 4}" y2="${cornerY + 4}" stroke="#f44336" stroke-width="1"/>`;
-    svg += `<line x1="${cornerX + 4}" y1="${cornerY - 4}" x2="${cornerX - 4}" y2="${cornerY + 4}" stroke="#f44336" stroke-width="1"/>`;
-    if (showLabels) {
-      svg += `<text x="${cornerX + 10}" y="${cornerY - 5}" fill="#f44336" font-family="${mono}" font-size="8">CORNER POST</text>`;
-      svg += `<text x="${cornerX + 10}" y="${cornerY + 8}" fill="#f44336" font-family="${mono}" font-size="7">bolted through ledger</text>`;
-    }
-  }
-
-  // Purlin lines
+  // ── PURLIN LINES ──
   if (showPurlins) {
-    const nPurlins = Math.max(3, Math.floor(width / 0.8));
+    const nPurlins = Math.max(3, Math.floor(safeStructWidth / 0.8));
     for (let i = 1; i < nPurlins; i++) {
-      const px = structX + (i / nPurlins) * structW;
-      svg += `<line x1="${px}" y1="${structY}" x2="${px}" y2="${structY + structD}" stroke="${dimCol}" stroke-width="0.3" stroke-dasharray="2,3"/>`;
+      const px = structX + (i / nPurlins) * structW_px;
+      svg += `<line x1="${px}" y1="${structY}" x2="${px}" y2="${structY + structD_px}" stroke="${dimCol}" stroke-width="0.3" stroke-dasharray="2,3"/>`;
     }
   }
 
-  // Gable end indicators
+  // ── GABLE END INDICATORS ──
   if (isGable && showLabels) {
-    svg += `<text x="${structX + structW / 2}" y="${structY - 8}" text-anchor="middle" fill="${structCol}" font-family="${mono}" font-size="8">▼ GABLE END (infill)</text>`;
-    svg += `<text x="${structX + structW / 2}" y="${structY + structD + 12}" text-anchor="middle" fill="${structCol}" font-family="${mono}" font-size="8">▲ GABLE END (infill)</text>`;
+    svg += `<text x="${structX + structW_px / 2}" y="${structY - 10}" text-anchor="middle" fill="${structCol}" font-family="${mono}" font-size="8">▼ GABLE END (infill)</text>`;
+    svg += `<text x="${structX + structW_px / 2}" y="${structY + structD_px + 14}" text-anchor="middle" fill="${structCol}" font-family="${mono}" font-size="8">▲ GABLE END (infill)</text>`;
   }
 
-  // Member labels
+  // ── MEMBER LABELS ──
   if (showLabels) {
-    const midX = structX + structW / 2;
-    if (attachment !== 'freestanding') svg += `<text x="${structX - 5}" y="${structY + structD / 2}" text-anchor="end" fill="${rafterCol}" font-family="${mono}" font-size="8">LEDGER BEAM →</text>`;
-    svg += `<text x="${structX + structW + 5}" y="${structY + structD / 2}" text-anchor="start" fill="${rafterCol}" font-family="${mono}" font-size="8">← FASCIA BEAM</text>`;
+    const midX = structX + structW_px / 2;
+    if (attachBack) svg += `<text x="${midX}" y="${structY + 14}" text-anchor="middle" fill="${rafterCol}" font-family="${mono}" font-size="8">LEDGER BEAM (attached)</text>`;
+    if (attachLeft) svg += `<text x="${structX + 14}" y="${structY + structD_px / 2}" text-anchor="start" fill="${rafterCol}" font-family="${mono}" font-size="8" transform="rotate(90 ${structX + 14} ${structY + structD_px / 2})">LEDGER</text>`;
+    if (attachRight) svg += `<text x="${structX + structW_px - 14}" y="${structY + structD_px / 2}" text-anchor="end" fill="${rafterCol}" font-family="${mono}" font-size="8" transform="rotate(90 ${structX + structW_px - 14} ${structY + structD_px / 2})">LEDGER</text>`;
+    if (!attachFront) svg += `<text x="${midX}" y="${structY + structD_px - 8}" text-anchor="middle" fill="${rafterCol}" font-family="${mono}" font-size="8">FASCIA BEAM (free)</text>`;
   }
 
-  // Dimensions
+  // ── DIMENSIONS ──
   if (showDims) {
-    const dimTop = structY - 20;
-    svg += `<line x1="${structX}" y1="${dimTop}" x2="${structX + structW}" y2="${dimTop}" stroke="${dimCol}" stroke-width="0.5"/>`;
-    svg += `<line x1="${structX}" y1="${structY - 3}" x2="${structX}" y2="${dimTop + 3}" stroke="${dimCol}" stroke-width="0.5"/>`;
-    svg += `<line x1="${structX + structW}" y1="${structY - 3}" x2="${structX + structW}" y2="${dimTop + 3}" stroke="${dimCol}" stroke-width="0.5"/>`;
-    svg += `<text x="${structX + structW / 2}" y="${dimTop - 4}" text-anchor="middle" fill="${dimCol}" font-family="${mono}" font-size="9">${width.toFixed(2)}m SPAN</text>`;
+    // BRICK WALL width (outer measure)
+    const dimTop = brickY - 30;
+    svg += `<line x1="${brickX}" y1="${dimTop}" x2="${brickX + brickW_px}" y2="${dimTop}" stroke="${houseCol}" stroke-width="0.5"/>`;
+    svg += `<line x1="${brickX}" y1="${brickY - 3}" x2="${brickX}" y2="${dimTop + 3}" stroke="${houseCol}" stroke-width="0.5"/>`;
+    svg += `<line x1="${brickX + brickW_px}" y1="${brickY - 3}" x2="${brickX + brickW_px}" y2="${dimTop + 3}" stroke="${houseCol}" stroke-width="0.5"/>`;
+    svg += `<text x="${brickX + brickW_px / 2}" y="${dimTop - 4}" text-anchor="middle" fill="${houseCol}" font-family="${mono}" font-size="9" font-weight="bold">${brickWidth.toFixed(2)}m BRICK WALL</text>`;
 
-    const dimLeft = structX - 25;
-    svg += `<line x1="${dimLeft}" y1="${structY}" x2="${dimLeft}" y2="${structY + structD}" stroke="${dimCol}" stroke-width="0.5"/>`;
-    svg += `<line x1="${structX - 3}" y1="${structY}" x2="${dimLeft + 3}" y2="${structY}" stroke="${dimCol}" stroke-width="0.5"/>`;
-    svg += `<line x1="${structX - 3}" y1="${structY + structD}" x2="${dimLeft + 3}" y2="${structY + structD}" stroke="${dimCol}" stroke-width="0.5"/>`;
-    svg += `<text x="${dimLeft - 4}" y="${structY + structD / 2 + 3}" text-anchor="end" fill="${dimCol}" font-family="${mono}" font-size="9" transform="rotate(-90 ${dimLeft - 4} ${structY + structD / 2})">${depth.toFixed(2)}m DEPTH</text>`;
+    // BRICK WALL depth
+    const dimLeft = brickX - 30;
+    svg += `<line x1="${dimLeft}" y1="${brickY}" x2="${dimLeft}" y2="${brickY + brickD_px}" stroke="${houseCol}" stroke-width="0.5"/>`;
+    svg += `<line x1="${brickX - 3}" y1="${brickY}" x2="${dimLeft + 3}" y2="${brickY}" stroke="${houseCol}" stroke-width="0.5"/>`;
+    svg += `<line x1="${brickX - 3}" y1="${brickY + brickD_px}" x2="${dimLeft + 3}" y2="${brickY + brickD_px}" stroke="${houseCol}" stroke-width="0.5"/>`;
+    svg += `<text x="${dimLeft - 4}" y="${brickY + brickD_px / 2 + 3}" text-anchor="end" fill="${houseCol}" font-family="${mono}" font-size="9" font-weight="bold" transform="rotate(-90 ${dimLeft - 4} ${brickY + brickD_px / 2})">${brickDepth.toFixed(2)}m</text>`;
+
+    // CLEAR SPAN width (structure)
+    const dimStructTop = structY - 18;
+    svg += `<line x1="${structX}" y1="${dimStructTop}" x2="${structX + structW_px}" y2="${dimStructTop}" stroke="${structCol}" stroke-width="0.5" stroke-dasharray="3,2"/>`;
+    svg += `<line x1="${structX}" y1="${structY - 3}" x2="${structX}" y2="${dimStructTop + 3}" stroke="${structCol}" stroke-width="0.5"/>`;
+    svg += `<line x1="${structX + structW_px}" y1="${structY - 3}" x2="${structX + structW_px}" y2="${dimStructTop + 3}" stroke="${structCol}" stroke-width="0.5"/>`;
+    svg += `<text x="${structX + structW_px / 2}" y="${dimStructTop - 4}" text-anchor="middle" fill="${structCol}" font-family="${mono}" font-size="9" font-weight="bold">CLEAR SPAN ${safeStructWidth.toFixed(3)}m</text>`;
+
+    // CLEAR SPAN depth
+    const dimStructLeft = structX - 22;
+    svg += `<line x1="${dimStructLeft}" y1="${structY}" x2="${dimStructLeft}" y2="${structY + structD_px}" stroke="${structCol}" stroke-width="0.5" stroke-dasharray="3,2"/>`;
+    svg += `<line x1="${structX - 3}" y1="${structY}" x2="${dimStructLeft + 3}" y2="${structY}" stroke="${structCol}" stroke-width="0.5"/>`;
+    svg += `<line x1="${structX - 3}" y1="${structY + structD_px}" x2="${dimStructLeft + 3}" y2="${structY + structD_px}" stroke="${structCol}" stroke-width="0.5"/>`;
+    svg += `<text x="${dimStructLeft - 4}" y="${structY + structD_px / 2 + 3}" text-anchor="end" fill="${structCol}" font-family="${mono}" font-size="9" font-weight="bold" transform="rotate(-90 ${dimStructLeft - 4} ${structY + structD_px / 2})">${safeStructDepth.toFixed(3)}m</text>`;
   }
 
-  // Legend
+  // ── LEGEND ──
   if (showLabels) {
-    const legX = W - 130;
-    const legY = H - 85;
-    svg += `<rect x="${legX}" y="${legY}" width="120" height="70" rx="3" fill="rgba(30,30,40,0.6)" stroke="${dimCol}" stroke-width="0.5"/>`;
-    svg += `<text x="${legX + 60}" y="${legY + 12}" text-anchor="middle" fill="${textCol}" font-family="${mono}" font-size="9" font-weight="bold">LEGEND</text>`;
-    svg += `<rect x="${legX + 8}" y="${legY + 20}" width="8" height="8" fill="${postCol}"/>`;
-    svg += `<text x="${legX + 22}" y="${legY + 27}" fill="${dimCol}" font-family="${mono}" font-size="8">Column/Post</text>`;
-    svg += `<line x1="${legX + 8}" y1="${legY + 36}" x2="${legX + 16}" y2="${legY + 36}" stroke="${rafterCol}" stroke-width="2"/>`;
-    svg += `<text x="${legX + 22}" y="${legY + 40}" fill="${dimCol}" font-family="${mono}" font-size="8">Rafter/Beam</text>`;
-    svg += `<line x1="${legX + 8}" y1="${legY + 50}" x2="${legX + 16}" y2="${legY + 50}" stroke="${dimCol}" stroke-width="0.5" stroke-dasharray="2,3"/>`;
-    svg += `<text x="${legX + 22}" y="${legY + 54}" fill="${dimCol}" font-family="${mono}" font-size="8">Purlin</text>`;
-    svg += `<circle cx="${legX + 12}" cy="${legY + 64}" r="3" fill="none" stroke="#f44336" stroke-width="1"/>`;
-    svg += `<text x="${legX + 22}" y="${legY + 68}" fill="${dimCol}" font-family="${mono}" font-size="8">Corner Post</text>`;
+    const legX = W - 155;
+    const legY = H - 110;
+    svg += `<rect x="${legX}" y="${legY}" width="145" height="98" rx="3" fill="rgba(30,30,40,0.7)" stroke="${dimCol}" stroke-width="0.5"/>`;
+    svg += `<text x="${legX + 72}" y="${legY + 12}" text-anchor="middle" fill="${textCol}" font-family="${mono}" font-size="9" font-weight="bold">LEGEND</text>`;
+
+    svg += `<rect x="${legX + 8}" y="${legY + 20}" width="8" height="8" fill="${postCol}" stroke="#fff" stroke-width="1"/>`;
+    svg += `<text x="${legX + 22}" y="${legY + 27}" fill="${dimCol}" font-family="${mono}" font-size="8">Standalone Column</text>`;
+
+    svg += `<rect x="${legX + 8}" y="${legY + 34}" width="10" height="6" fill="${connCol}" stroke="#fff" stroke-width="0.5" rx="1"/>`;
+    svg += `<text x="${legX + 22}" y="${legY + 40}" fill="${dimCol}" font-family="${mono}" font-size="8">Fascia Bracket</text>`;
+
+    svg += `<line x1="${legX + 8}" y1="${legY + 52}" x2="${legX + 18}" y2="${legY + 52}" stroke="${rafterCol}" stroke-width="2"/>`;
+    svg += `<text x="${legX + 22}" y="${legY + 56}" fill="${dimCol}" font-family="${mono}" font-size="8">Rafter / Beam</text>`;
+
+    svg += `<line x1="${legX + 8}" y1="${legY + 66}" x2="${legX + 18}" y2="${legY + 66}" stroke="${dimCol}" stroke-width="0.5" stroke-dasharray="2,3"/>`;
+    svg += `<text x="${legX + 22}" y="${legY + 70}" fill="${dimCol}" font-family="${mono}" font-size="8">Purlin</text>`;
+
+    svg += `<circle cx="${legX + 13}" cy="${legY + 82}" r="5" fill="none" stroke="#f44336" stroke-width="1" stroke-dasharray="2,2"/>`;
+    svg += `<text x="${legX + 22}" y="${legY + 86}" fill="${dimCol}" font-family="${mono}" font-size="8">Free Corner</text>`;
   }
 
   svg += '</svg>';

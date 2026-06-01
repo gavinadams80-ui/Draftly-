@@ -203,7 +203,8 @@ export function generateBuildingPlanSVG(
   standoff: number = 0.15,     // m — standoff from house fascia
   leftSetback: number  = 0,    // m — left wall stops this far from front (0 = full)
   rightSetback: number = 0,    // m — right wall stops this far from front
-  purlinSpacing: number = 1.35, // m — from engineering calc
+  _purlinSpacing: number = 1.35, // m — from engineering calc
+  northRotation: number = 0,   // degrees clockwise — 0 = north is up
 ): string {
   const W = 700, H = 580;
   const mono = 'DM Mono,monospace';
@@ -303,11 +304,16 @@ export function generateBuildingPlanSVG(
   const attachLabel = attachment === 'three-side' ? '3-SIDE ATTACHED' : attachment === 'attached' ? 'ATTACHED' : 'FREESTANDING';
   svg += `<text x="${W / 2}" y="18" text-anchor="middle" font-family="${mono}" font-size="9.5" fill="${textCol}" font-weight="600">PLAN VIEW · ${attachLabel} · ${width.toFixed(2)}m × ${depth.toFixed(2)}m · ${portalFrameCount} PORTAL FRAMES · ${(standoff * 1000).toFixed(0)}mm STANDOFF</text>`;
 
-  // North arrow
+  // North arrow — rotated by northRotation degrees (clockwise) around its centre
   const nX = W - 28, nY = margin.top + 14;
+  svg += `<g transform="rotate(${northRotation}, ${nX}, ${nY + 11})">`;
   svg += `<line x1="${nX}" y1="${nY + 12}" x2="${nX}" y2="${nY}" stroke="${dimCol}" stroke-width="1"/>`;
   svg += `<polygon points="${nX},${nY} ${nX - 4},${nY + 7} ${nX + 4},${nY + 7}" fill="${dimCol}"/>`;
   svg += `<text x="${nX}" y="${nY + 22}" text-anchor="middle" font-family="${mono}" font-size="6.5" fill="${dimCol}">N</text>`;
+  svg += `</g>`;
+  if (northRotation !== 0) {
+    svg += `<text x="${nX}" y="${nY + 32}" text-anchor="middle" font-family="${mono}" font-size="5.5" fill="${dimCol}">${northRotation}°</text>`;
+  }
 
   // ══════════════════════════════════════════════════════════════════
   // DIMENSIONS — all pushed out with dashed leaders, nothing overlaps

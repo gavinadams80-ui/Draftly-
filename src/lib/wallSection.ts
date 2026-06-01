@@ -17,15 +17,14 @@ export function generateWallSectionSVG(
   const W = 1060, H = 600;
   const sc = 0.12; // px/mm
 
-  const mono        = 'DM Mono,monospace';
+
   const brickFill   = 'rgba(190,105,50,0.45)';
   const brickStroke = '#c0632a';
   const timberFill  = 'rgba(200,168,70,0.35)';
   const timberStroke = '#a08030';
   const concFill    = 'rgba(130,130,130,0.28)';
   const concStroke  = '#888';
-  const dimCol      = '#6b7090';
-  const textCol     = '#c8cce0';
+
   const groundCol   = '#555';
 
   // ── Key dimensions (mm) ──
@@ -73,11 +72,7 @@ export function generateWallSectionSVG(
     `<line x1="${r(x1)}" y1="${r(y1)}" x2="${r(x2)}" y2="${r(y2)}" stroke="${col}" stroke-width="${sw}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`;
   const rx = (x: number, y: number, w: number, h: number, fill: string, stroke: string, sw = 0.8) =>
     `<rect x="${r(x)}" y="${r(y)}" width="${r(w)}" height="${r(h)}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
-  const tx = (x: number, y: number, s: string, size: number, fill: string, anchor = 'start', bold = false) => {
-    const ta = anchor !== 'start' ? ` text-anchor="${anchor}"` : '';
-    const fw = bold ? ' font-weight="700"' : '';
-    return `<text x="${r(x)}" y="${r(y)}" font-family="${mono}" font-size="${size}" fill="${fill}"${ta}${fw}>${s}</text>`;
-  };
+
 
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;display:block;">`;
   svg += `<rect width="${W}" height="${H}" fill="transparent"/>`;
@@ -95,7 +90,7 @@ export function generateWallSectionSVG(
   // CONC. SLAB label deferred
 
   // ── DRAW WALL helper (left wall: timber left, brick right; mirrored for right) ──
-  const drawOneWall = (tL: number, bL: number, brickH: number, timberH: number, isMirrored: boolean) => {
+  const drawOneWall = (tL: number, bL: number, brickH: number, _timberH: number, isMirrored: boolean) => {
     let s = '';
     const wallBot = fflY;
 
@@ -154,21 +149,38 @@ export function generateWallSectionSVG(
   svg += ln(lWebX, fTopY, lBR,   fTopY,      fasciaCol, fSW);           // top flange tip → at brick
   svg += ln(lWebX, fBotY, lBR,   fBotY,      fasciaCol, fSW);           // bottom flange tip → at brick
 
-  // RIGHT fascia — wall position for PF1/PF2, rafter-end position for PF3
+  // RIGHT fascia
   const rWebX = rBL - fDepth;
-  if (frameType !== 'front') {
-    // Normal: web behind brick, flanges at brick face
-    svg += ln(rWebX,          fTopY, rWebX,   fBotY,   fasciaCol, fSW);
-    svg += ln(rWebX,          fTopY, rBL,     fTopY,   fasciaCol, fSW);
-    svg += ln(rWebX,          fBotY, rBL,     fBotY,   fasciaCol, fSW);
+  if (frameType === 'back') {
+    // PF1 only: normal side-profile fascia at brick wall
+    svg += ln(rWebX, fTopY, rWebX, fBotY, fasciaCol, fSW);
+    svg += ln(rWebX, fTopY, rBL,   fTopY, fasciaCol, fSW);
+    svg += ln(rWebX, fBotY, rBL,   fBotY, fasciaCol, fSW);
+  } else if (frameType === 'intermediate') {
+    // PF2: TWO fascia visible —
+    // 1) Original wall fascia (side profile, runs left-right along wall face, running BACK toward us)
+    svg += ln(rWebX, fTopY, rWebX, fBotY, fasciaCol, fSW);
+    svg += ln(rWebX, fTopY, rBL,   fTopY, fasciaCol, fSW);
+    svg += ln(rWebX, fBotY, rBL,   fBotY, fasciaCol, fSW);
+    // 2) Span fascia end profile (C150×50×1.9 runs depth-wise toward PF3, AWAY from us)
+    const epD2   = 150 * sc;
+    const epBf2  = 50  * sc;
+    const epT2   = Math.max(1.2, 1.9 * sc);
+    const eX2b   = rWebX - 150 * sc;
+    const eX1b   = eX2b - epBf2;
+    const epTopY2 = brickTopY - epD2;
+    svg += `<rect x="${eX1b.toFixed(1)}" y="${epTopY2.toFixed(1)}" width="${epBf2.toFixed(1)}" height="${epD2.toFixed(1)}" fill="rgba(33,150,243,0.25)" stroke="${fasciaCol}" stroke-width="${fSW}"/>`;
+    svg += `<rect x="${eX1b.toFixed(1)}" y="${(epTopY2 + epT2).toFixed(1)}" width="${(epBf2 - epT2).toFixed(1)}" height="${(epD2 - 2 * epT2).toFixed(1)}" fill="rgba(15,16,20,0.85)"/>`;
   } else {
-    // PF3: fascia at the rafter end — compute rafter end position inline
-    // rBearX = rRhsEndX = rWebX - RHS_PAST*sc = (rBL - fDepth) - RHS_PAST*sc
-    const pf3RafterEndX = rWebX - 150 * sc;  // 150mm past fascia web = rafter end
-    const rfWebX = pf3RafterEndX + fDepth;
-    svg += ln(rfWebX, fTopY, rfWebX,        fBotY,   fasciaCol, fSW);  // web
-    svg += ln(rfWebX, fTopY, pf3RafterEndX, fTopY,   fasciaCol, fSW);  // top flange
-    svg += ln(rfWebX, fBotY, pf3RafterEndX, fBotY,   fasciaCol, fSW);  // bottom flange
+    // PF3: end profile only (C150×50×1.9, runs AWAY from us toward PF2)
+    const epD    = 150 * sc;
+    const epBf   = 50  * sc;
+    const epT    = Math.max(1.2, 1.9 * sc);
+    const eX2   = rWebX - 150 * sc;
+    const eX1   = eX2 - epBf;
+    const epTopY = brickTopY - epD;
+    svg += `<rect x="${eX1.toFixed(1)}" y="${epTopY.toFixed(1)}" width="${epBf.toFixed(1)}" height="${epD.toFixed(1)}" fill="rgba(33,150,243,0.25)" stroke="${fasciaCol}" stroke-width="${fSW}"/>`;
+    svg += `<rect x="${eX1.toFixed(1)}" y="${(epTopY + epT).toFixed(1)}" width="${(epBf - epT).toFixed(1)}" height="${(epD - 2 * epT).toFixed(1)}" fill="rgba(15,16,20,0.85)"/>`;
   }
 
   // ── GUTTER PROFILE ──
@@ -193,7 +205,7 @@ export function generateWallSectionSVG(
   svg += ln(gLInnX, gutBotY, gLOutX,  gutBotY, gutCol, gutSW);           // bottom
   svg += ln(gLInnX, gutBotY, gLInnX,  gutBotY - gutLegL, gutCol, gutSW); // inner leg (62mm) — against fascia
   svg += ln(gLOutX, gutBotY, gLOutX,  gutBotY - gutLegR, gutCol, gutSW); // outer leg (90mm) — toward span
-  // Hook on outer (span) leg — return away from wall (right), then curl up
+  // Hook on outer (span) leg
   svg += ln(gLOutX, gutBotY - gutLegR, gLOutX + gutHook, gutBotY - gutLegR, gutCol, gutSW);
   svg += ln(gLOutX + gutHook, gutBotY - gutLegR, gLOutX + gutHook, gutBotY - gutLegR - gutHookUp, gutCol, gutSW);
 
@@ -203,12 +215,20 @@ export function generateWallSectionSVG(
   const gRInnX = rBL - gutOffset;        // back / inner hook leg — 30mm into span
   const gROutX = gRInnX - gutW;          // front / outer leg — 115mm further in
 
-  svg += ln(gRInnX, gutBotY, gROutX,  gutBotY, gutCol, gutSW);           // bottom
-  svg += ln(gRInnX, gutBotY, gRInnX,  gutBotY - gutLegL, gutCol, gutSW); // inner leg (62mm) — against fascia
-  svg += ln(gROutX, gutBotY, gROutX,  gutBotY - gutLegR, gutCol, gutSW); // outer leg (90mm) — toward span
-  // Hook on outer (span) leg — return away from wall (left for right wall), then curl up
-  svg += ln(gROutX, gutBotY - gutLegR, gROutX - gutHook, gutBotY - gutLegR, gutCol, gutSW);
-  svg += ln(gROutX - gutHook, gutBotY - gutLegR, gROutX - gutHook, gutBotY - gutLegR - gutHookUp, gutCol, gutSW);
+  svg += ln(gRInnX, gutBotY, gROutX, gutBotY, gutCol, gutSW);  // bottom
+  if (frameType === 'front') {
+    // PF3 only: tall inner leg (90mm) with hook clips onto fascia; short outer leg faces span
+    svg += ln(gRInnX, gutBotY, gRInnX, gutBotY - gutLegR, gutCol, gutSW); // inner (90mm)
+    svg += ln(gROutX, gutBotY, gROutX, gutBotY - gutLegL, gutCol, gutSW); // outer (62mm)
+    svg += ln(gRInnX, gutBotY - gutLegR, gRInnX + gutHook, gutBotY - gutLegR, gutCol, gutSW);
+    svg += ln(gRInnX + gutHook, gutBotY - gutLegR, gRInnX + gutHook, gutBotY - gutLegR - gutHookUp, gutCol, gutSW);
+  } else {
+    // PF1 & PF2: original — inner leg 62mm, outer leg 90mm with hook toward span
+    svg += ln(gRInnX, gutBotY, gRInnX, gutBotY - gutLegL, gutCol, gutSW); // inner (62mm)
+    svg += ln(gROutX, gutBotY, gROutX, gutBotY - gutLegR, gutCol, gutSW); // outer (90mm)
+    svg += ln(gROutX, gutBotY - gutLegR, gROutX - gutHook, gutBotY - gutLegR, gutCol, gutSW);
+    svg += ln(gROutX - gutHook, gutBotY - gutLegR, gROutX - gutHook, gutBotY - gutLegR - gutHookUp, gutCol, gutSW);
+  }
 
   // ── RHS STANDOFF — 75×50×3mm steel, side profile ──
   // Runs horizontally from outer timber face through wall + fascia, 150mm into span past fascia web.
@@ -487,7 +507,7 @@ export function generateWallSectionSVG(
   // ── PURLIN END PROFILES — 5 per rafter, top flush with rafter top ──
   // 75mm from each end, 3 evenly spaced between. Shown as end cross-sections.
   const purlinCount  = 5;
-  const purlin75     = 75 * sc;            // 75mm from each end in px
+  // purlin75 = 75 * sc — reserved for future purlin position drawing
   const pD           = purlinD  * sc;      // section depth px
   const pBf          = purlinBf * sc;      // flange width px (half each side of centre)
   const pT           = Math.max(1.2, purlinT * sc); // wall thickness px (min 1.2 visible)

@@ -48,6 +48,7 @@ const DEFAULT_FORMS: MemberForms = {
   fascia: 'open',
   gableChord: 'open',
   gableDropper: 'open',
+  gableTopChord: 'open',   // rafter sized as truss top chord (compression)
 };
 
 const DEFAULT_OVERRIDES: MemberOverrides = {
@@ -58,6 +59,7 @@ const DEFAULT_OVERRIDES: MemberOverrides = {
   fascia: null,
   gableChord: null,
   gableDropper: null,
+  gableTopChord: null,
 };
 
 // ── Status badge helper ──
@@ -171,6 +173,41 @@ function MemberCard({
   );
 }
 
+// ── Small pill badge for the site constraints banner ──
+function Chip({ label, warn = false }: { label: string; warn?: boolean }) {
+  return (
+    <span style={{
+      fontSize: '10px', fontFamily: 'var(--mono)', padding: '2px 8px', borderRadius: '4px',
+      background: warn ? 'rgba(224,108,108,0.12)' : 'rgba(255,255,255,0.06)',
+      color: warn ? '#e06c6c' : 'var(--text-muted)',
+      border: `1px solid ${warn ? 'rgba(224,108,108,0.3)' : 'var(--border)'}`,
+      whiteSpace: 'nowrap',
+    }}>
+      {label}
+    </span>
+  );
+}
+
+// ── Intelligence handoff payload (subset we care about) ──
+interface SiteConstraints {
+  address: string;
+  zone?: string;
+  council?: string;
+  maxHeight?: number;   // metres
+  setbacks?: { front?: number; side?: number; rear?: number };
+  siteCoverage?: number; // %
+  overlays?: string[];
+  confidence?: string;
+}
+
+// Map Intelligence projectType strings → Engineering BuildingType enum
+const PROJECT_TYPE_MAP: Record<string, BuildingType> = {
+  pergola: 'pergola', carport: 'carport', shed: 'shed',
+  verandah: 'verandah', extension: 'extension', deck: 'deck', patio: 'patio',
+  'new dwelling': 'extension', house: 'extension', garage: 'carport',
+  'granny flat': 'extension', 'secondary dwelling': 'extension',
+};
+
 // ── Main App ──
 export default function App() {
   const [config, setConfig] = useState<ProjectConfig>(DEFAULT_CONFIG);
@@ -184,8 +221,74 @@ export default function App() {
   const [leftSetback, setLeftSetback] = useState(0);    // m — right-side wall stops this far from front (0 = full depth)
   const [rightSetback, setRightSetback] = useState(1.8); // m — right-side wall stops this far from front
   const [titleBlock, setTitleBlock] = useState<TitleBlockData>(DEFAULT_TITLE_BLOCK);
+  const [siteConstraints, setSiteConstraints] = useState<SiteConstraints | null>(null);
+  const [northRotation, setNorthRotation] = useState(0); // degrees clockwise, 0 = north up
   const updateTB = useCallback((patch: Partial<TitleBlockData>) =>
     setTitleBlock(prev => ({ ...prev, ...patch })), []);
+
+  const importIntelligenceProject = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const payload = JSON.parse(e.target?.result as string);
+        const b = payload.boundaries?.building ?? {};
+        const r = payload.research ?? {};
+        const s = payload.site ?? {};
+
+        // Pre-fill dimensions from building footprint
+        const patch: Partial<ProjectConfig> = {};
+        if (b.width) patch.width = b.width;
+        if (b.depth) patch.depth = b.depth;
+        if (b.height) patch.height = b.height;
+
+        // Map project type
+        const rawType = (s.projectType ?? '').toLowerCase();
+        const mappedType = PROJECT_TYPE_MAP[rawType];
+        if (mappedType) patch.buildingType = mappedType;
+
+        // Attachment type from siting tool
+        const att = payload.boundaries?.attachment;
+        if (att === 'freestanding' || att === 'attached' || att === 'three-side') {
+          patch.attachment = att as AttachmentType;
+        }
+
+        // Pitch and height from siting tool
+        if (b.pitch)        patch.pitch  = b.pitch;
+        if (b.gutterHeight) patch.height = b.gutterHeight;
+
+        // Pre-fill title block with site address
+        if (s.fullAddress) updateTB({ projectName: s.fullAddress, date: new Date().toLocaleDateString('en-AU') });
+
+        if (typeof payload.boundaries?.northBearing === 'number') {
+          setNorthRotation(payload.boundaries.northBearing);
+        }
+
+        setConfig(prev => ({ ...prev, ...patch }));
+        setOverrides({ post: null, beam: null, purlin: null, ledger: null, fascia: null, gableChord: null, gableDropper: null, gableTopChord: null } as MemberOverrides);
+
+        // Store site constraints for display
+        setSiteConstraints({
+          address: s.fullAddress ?? '',
+          zone: r.zone,
+          council: r.council,
+          maxHeight: r.max_height ? parseFloat(r.max_height) : undefined,
+          setbacks: r.setbacks ? {
+            front: parseFloat(r.setbacks.front) || undefined,
+            side: parseFloat(r.setbacks.side) || undefined,
+            rear: parseFloat(r.setbacks.rear) || undefined,
+          } : undefined,
+          siteCoverage: r.site_coverage ? parseFloat(r.site_coverage) : undefined,
+          overlays: r.overlays,
+          confidence: r.confidence,
+        });
+
+        setActiveTab('structure');
+      } catch {
+        alert('Could not read project file — make sure it is a valid Draftly Intelligence export.');
+      }
+    };
+    reader.readAsText(file);
+  }, [updateTB]);
 
   const updateConfig = useCallback((patch: Partial<ProjectConfig>) => {
     setConfig((prev) => ({ ...prev, ...patch }));
@@ -207,8 +310,12 @@ export default function App() {
   const calc = useMemo(() => {
     const sections = getSectionDB(config.constructionType);
     const bracingFactor = getBracingFactor(config.attachment);
-    const effectiveSpan = config.width * Math.sqrt(bracingFactor);
-    const postSpan = config.attachment === 'three-side' ? config.width * 0.25 : effectiveSpan;
+
+    // Actual structural span = brick-to-brick width minus standoff on each side
+    const actualSpan = Math.max(0.5, config.width - 2 * (standoff / 1000));
+
+    const effectiveSpan = actualSpan * Math.sqrt(bracingFactor);
+    const postSpan = config.attachment === 'three-side' ? actualSpan * 0.25 : effectiveSpan;
 
     const profile = getRoofingProfile(selectedProfile);
     const purlinSpacing = profile.internalSpan / 1000;
@@ -226,11 +333,11 @@ export default function App() {
     let selPost = overrides.post ? postResults.find((r) => r.sec.size === overrides.post) || null : null;
     if (!selPost) selPost = lightestPassing(postResults);
 
-    // ── BEAM (rafter) ── uses FULL clearSpan
+    // ── BEAM (rafter) ── uses actual structural span (minus standoff)
     const beamFiltered = filterByForm(sections.beams || sections.rafters, forms.beam);
     const beamResults = calcUtilisation(
       beamFiltered.length ? beamFiltered : sections.beams || sections.rafters,
-      config.width, 1.5, config.constructionType,
+      actualSpan, 1.5, config.constructionType,
       { memberForm: forms.beam }
     );
     let selBeam = overrides.beam ? beamResults.find((r) => r.sec.size === overrides.beam) || null : null;
@@ -268,49 +375,79 @@ export default function App() {
     let selFascia = overrides.fascia ? fasciaResults.find((r) => r.sec.size === overrides.fascia) || null : null;
     if (!selFascia) selFascia = lightestPassing(fasciaResults);
 
-    // ── GABLE BOTTOM CHORD ── spans full width at gable end
-    // Bottom chord (stringer) across the gable end, supports gable infill
+    // ── GABLE BOTTOM CHORD ── tie beam in tension; bending only between droppers
+    // Effective bending span = dropper spacing ≈ cladding panel width (~927mm).
+    // NOT the full gable width — the chord is a tension member, not a beam.
+    // Use purlinSpacing as a conservative proxy for dropper spacing.
+    const chordBendingSpan = purlinSpacing; // ~1.35m — bending between dropper attachment pts
     const gableChordFiltered = filterByForm(sections.beams || sections.rafters, forms.gableChord);
     const gableChordResults = calcUtilisation(
       gableChordFiltered.length ? gableChordFiltered : sections.beams || sections.rafters,
-      config.width, frameSpacing / 2, config.constructionType,
+      chordBendingSpan, frameSpacing / 2, config.constructionType,
       { memberForm: forms.gableChord }
     );
     let selGableChord = overrides.gableChord ? gableChordResults.find((r) => r.sec.size === overrides.gableChord) || null : null;
     if (!selGableChord) selGableChord = lightestPassing(gableChordResults);
 
-    // ── GABLE DROPPER ── vertical post from rafter down to bottom chord
-    // Height = rafter rise at half-span (gable apex height above eave)
-    const dropperHeight = (config.width / 2) * Math.tan(config.pitch * Math.PI / 180);
+    // ── GABLE DROPPER ── net clear height between rafter bottom face and chord top face
+    const dropperHeight = (actualSpan / 2) * Math.tan(config.pitch * Math.PI / 180);
+    const pitchRad = config.pitch * Math.PI / 180;
+    const rafterClear = (selBeam?.sec.d ?? 0) / 1000 / Math.cos(pitchRad);
+    const chordClear  = (selGableChord?.sec.d ?? 0) / 1000;
+    const netDropperH = Math.max(0.05, dropperHeight - rafterClear - chordClear);
     const gableDropperFiltered = filterByForm(sections.posts, forms.gableDropper);
     const gableDropperResults = calcUtilisation(
       gableDropperFiltered.length ? gableDropperFiltered : sections.posts,
-      Math.max(dropperHeight, 0.3), frameSpacing, config.constructionType,
+      Math.max(netDropperH, 0.1), frameSpacing, config.constructionType,
       { memberForm: forms.gableDropper }
     );
     let selGableDropper = overrides.gableDropper ? gableDropperResults.find((r) => r.sec.size === overrides.gableDropper) || null : null;
     if (!selGableDropper) selGableDropper = lightestPassing(gableDropperResults);
 
+    // ── GABLE TOP CHORD (TRUSS) ── rafter sized as compression strut
+    // In a tied portal (triangulated), the rafter carries axial compression.
+    // Critical buckling length = purlin spacing (purlins provide lateral restraint).
+    // Use beam sections db; span = purlinSpacing gives conservative capacity proxy.
+    const gableTopChordFiltered = filterByForm(sections.beams || sections.rafters, forms.gableTopChord);
+    const gableTopChordResults = calcUtilisation(
+      gableTopChordFiltered.length ? gableTopChordFiltered : sections.beams || sections.rafters,
+      purlinSpacing, frameSpacing / 2, config.constructionType,
+      { memberForm: forms.gableTopChord }
+    );
+    let selGableTopChord = overrides.gableTopChord
+      ? gableTopChordResults.find((r) => r.sec.size === overrides.gableTopChord) || null
+      : null;
+    if (!selGableTopChord) selGableTopChord = lightestPassing(gableTopChordResults);
+
+    // Axial compression in top chord: H = w·L²/(8·h), F = H/cos(θ)
+    const roofUDL = 0.6; // kN/m² — conservative DL + LL for truss analysis
+    const H_thrust = roofUDL * actualSpan * actualSpan / (8 * (dropperHeight || 0.01));
+    const topChordAxialKN = H_thrust / Math.cos(pitchRad);
+
     return {
       postResults, beamResults, purlinResults, ledgerResults, fasciaResults,
-      gableChordResults, gableDropperResults,
+      gableChordResults, gableDropperResults, gableTopChordResults,
       selPost, selBeam, selPurlin, selLedger, selFascia,
-      selGableChord, selGableDropper,
+      selGableChord, selGableDropper, selGableTopChord,
       postSpan, frameSpacing, purlinSpacing, bracingFactor, phi,
-      dropperHeight,
+      dropperHeight, netDropperH, topChordAxialKN,
     };
   }, [config, forms, overrides, selectedProfile]);
 
   // ── Gable infill calculation ──
   const gableInfill = useMemo(() => {
-    const dropperHeight = (config.width / 2) * Math.tan(config.pitch * Math.PI / 180);
+    const actualSpanG = Math.max(0.5, config.width - 2 * (standoff / 1000));
+    const dropperHeight = (actualSpanG / 2) * Math.tan(config.pitch * Math.PI / 180);
     return calcGableInfill(
-      config.width,
+      actualSpanG,
       dropperHeight,
       config.pitch,
       selectedCladding,
+      0.5,
+      calc.selBeam?.sec.d ?? 0,       // rafter depth — deducted from top
+      calc.selGableChord?.sec.d ?? 0, // bottom chord depth — deducted from base
     );
-  }, [config.width, config.pitch, selectedCladding]);
+  }, [config.width, config.pitch, selectedCladding, calc.selBeam, calc.selGableChord]);
 
   // ── Dropdown builder ──
   function buildDropdown(member: keyof MemberOverrides, results: UtilResult[], selected: UtilResult | null) {
@@ -369,6 +506,18 @@ export default function App() {
           <Badge variant="outline" style={{ fontFamily: 'var(--mono)', fontSize: '10px', letterSpacing: '0.06em' }}>
             {STANDARDS[config.constructionType]}
           </Badge>
+          <label style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+            padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontFamily: 'var(--mono)',
+            background: 'var(--accent)', color: '#fff', fontWeight: 600, letterSpacing: '0.04em',
+            whiteSpace: 'nowrap',
+          }}>
+            ↑ Import Site
+            <input
+              type="file" accept=".json" style={{ display: 'none' }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) importIntelligenceProject(f); e.target.value = ''; }}
+            />
+          </label>
         </div>
       </header>
 
@@ -381,6 +530,52 @@ export default function App() {
           The calculator recommends the smallest member in that family that passes the span and load;{' '}
           you can override it via the dropdown.
         </div>
+
+        {/* ── SITE CONSTRAINTS BANNER ── */}
+        {siteConstraints && (
+          <div style={{
+            background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.35)',
+            borderRadius: '8px', padding: '10px 14px', marginBottom: '16px',
+            display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center',
+          }}>
+            <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--accent)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: 4 }}>
+              Site
+            </span>
+            {siteConstraints.address && (
+              <span style={{ fontSize: '11px', color: 'var(--text)', marginRight: 8, flex: '1 1 200px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {siteConstraints.address}
+              </span>
+            )}
+            {siteConstraints.zone && (
+              <Chip label={`Zone: ${siteConstraints.zone}`} />
+            )}
+            {siteConstraints.council && (
+              <Chip label={siteConstraints.council} />
+            )}
+            {siteConstraints.maxHeight !== undefined && (
+              <Chip label={`Max H: ${siteConstraints.maxHeight}m`} warn={config.height > siteConstraints.maxHeight} />
+            )}
+            {siteConstraints.setbacks && (
+              <>
+                {siteConstraints.setbacks.front !== undefined && <Chip label={`F: ${siteConstraints.setbacks.front}m`} />}
+                {siteConstraints.setbacks.side !== undefined && <Chip label={`S: ${siteConstraints.setbacks.side}m`} />}
+                {siteConstraints.setbacks.rear !== undefined && <Chip label={`R: ${siteConstraints.setbacks.rear}m`} />}
+              </>
+            )}
+            {siteConstraints.siteCoverage !== undefined && (
+              <Chip label={`Cov: ${siteConstraints.siteCoverage}%`} />
+            )}
+            {siteConstraints.overlays?.map(o => <Chip key={o} label={o} warn />)}
+            {siteConstraints.confidence === 'low' && (
+              <Chip label="Low confidence" warn />
+            )}
+            <button
+              onClick={() => setSiteConstraints(null)}
+              style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: '2px 4px' }}
+              title="Dismiss"
+            >×</button>
+          </div>
+        )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="tabs-custom">
@@ -524,6 +719,15 @@ export default function App() {
                       type="number" step="0.1" min="0" max={config.depth}
                       value={rightSetback}
                       onChange={(e) => setRightSetback(parseFloat(e.target.value) || 0)}
+                    />
+                  </div>
+                  <div className="dim-field">
+                    <label>North bearing (°)</label>
+                    <input
+                      type="number" step="1" min="0" max="359"
+                      value={northRotation}
+                      onChange={(e) => setNorthRotation(parseFloat(e.target.value) || 0)}
+                      title="Degrees clockwise from drawing up. 0 = north is up."
                     />
                   </div>
                 </div>
@@ -711,7 +915,7 @@ export default function App() {
                 currentForm={forms.gableChord}
               />
               <MemberCard
-                label={`GABLE DROPPER (h=${calc.dropperHeight.toFixed(2)}m)`}
+                label={`GABLE DROPPER · NET h=${calc.netDropperH?.toFixed(3)}m (gross ${calc.dropperHeight.toFixed(3)}m)`}
                 icon="│"
                 result={calc.selGableDropper}
                 dropdown={buildDropdown('gableDropper', calc.gableDropperResults, calc.selGableDropper)}
@@ -720,6 +924,91 @@ export default function App() {
                 currentForm={forms.gableDropper}
               />
             </div>
+
+            {/* ════════════════════════════════════════════════════════
+                GABLE END RAFTER — TIED PORTAL (TRUSS ASSEMBLY)
+                PF1 & PF3 only: rafter acts as top chord in compression
+                when the bottom chord creates a triangulated frame.
+                ════════════════════════════════════════════════════════ */}
+            {config.roofType === 'gable' && (
+              <div style={{
+                marginTop: 20,
+                border: '2px solid #c9a84c',
+                borderRadius: 10,
+                background: 'rgba(201,168,76,0.06)',
+                padding: '14px 16px',
+              }}>
+                {/* Header */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                  <span style={{ fontSize: 20 }}>🔺</span>
+                  <div>
+                    <div style={{ fontSize: '12px', fontFamily: 'var(--mono)', fontWeight: 700, color: '#c9a84c', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                      GABLE END RAFTER · TIED PORTAL (TRUSS ASSEMBLY)
+                    </div>
+                    <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', marginTop: 2 }}>
+                      PF1 &amp; PF3 — rafter is TOP CHORD in axial compression · Bottom chord carries TENSION
+                    </div>
+                  </div>
+                </div>
+
+                {/* Truss force summary */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 14 }}>
+                  {[
+                    { label: 'Axial compression (top chord)', value: `${(calc.topChordAxialKN ?? 0).toFixed(1)} kN`, color: '#f44336' },
+                    { label: 'Buckling length (purlin c/c)',   value: `${(calc.purlinSpacing * 1000).toFixed(0)} mm`, color: '#2196f3' },
+                    { label: 'Current beam rafter',            value: calc.selBeam?.sec.size ?? '—',               color: '#888' },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} style={{ background: 'var(--surface2)', borderRadius: 6, padding: '8px 10px' }}>
+                      <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', marginBottom: 4 }}>{label}</div>
+                      <div style={{ fontSize: '14px', fontFamily: 'var(--mono)', fontWeight: 700, color }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Member selectors */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: '9px', color: '#c9a84c', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                      Top Chord (Rafter as Truss)
+                    </div>
+                    <MemberCard
+                      label="GABLE TOP CHORD · TRUSS RAFTER"
+                      icon="╱"
+                      result={calc.selGableTopChord}
+                      dropdown={buildDropdown('gableTopChord', calc.gableTopChordResults, calc.selGableTopChord)}
+                      onFormChange={(f) => updateForm('gableTopChord', f)}
+                      availableForms={getAvailableForms('gableTopChord')}
+                      currentForm={forms.gableTopChord}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '9px', color: '#c9a84c', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                      Bottom Chord (Tie Beam — Tension)
+                    </div>
+                    <MemberCard
+                      label="GABLE BOTTOM CHORD · TIE BEAM"
+                      icon="▭"
+                      result={calc.selGableChord}
+                      dropdown={buildDropdown('gableChord', calc.gableChordResults, calc.selGableChord)}
+                      onFormChange={(f) => updateForm('gableChord', f)}
+                      availableForms={getAvailableForms('gableChord')}
+                      currentForm={forms.gableChord}
+                    />
+                  </div>
+                </div>
+
+                {/* Weight comparison note */}
+                {calc.selGableTopChord && calc.selBeam && (
+                  <div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(76,175,80,0.08)', border: '1px solid rgba(76,175,80,0.25)', borderRadius: 6, fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                    <span style={{ color: '#4caf50', fontWeight: 700 }}>✓ TRUSS SAVING: </span>
+                    Truss top chord <span style={{ color: '#c9a84c' }}>{calc.selGableTopChord.sec.size}</span> ({calc.selGableTopChord.sec.wt.toFixed(2)} kg/m)
+                    {' '}vs moment-frame rafter <span style={{ color: '#888' }}>{calc.selBeam.sec.size}</span> ({calc.selBeam.sec.wt.toFixed(2)} kg/m)
+                    {' '}— <span style={{ color: '#4caf50' }}>{((1 - calc.selGableTopChord.sec.wt / calc.selBeam.sec.wt) * 100).toFixed(0)}% lighter</span> per rafter for PF1 &amp; PF3.
+                    Note: axial compression ({(calc.topChordAxialKN ?? 0).toFixed(1)} kN) governs — verify to AS4600.
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* ── GABLE INFILL SECTION ── */}
             {config.roofType === 'gable' && (
@@ -924,7 +1213,7 @@ export default function App() {
                       generateBuildingPlanSVG(
                         config.width, config.depth, config.height, config.pitch,
                         config.attachment, config.portalFrameCount, config.roofType === 'gable',
-                        standoff / 1000, leftSetback, rightSetback, calc.purlinSpacing
+                        standoff / 1000, leftSetback, rightSetback, calc.purlinSpacing, northRotation
                       ),
                       titleBlock, 'Plan View — Structure Layout', 'S-001', 1, 1, 'NTS'
                     )
@@ -1094,12 +1383,12 @@ export default function App() {
                 <div style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', marginBottom: 8 }}>
                   Connections required for each member type in this structure
                 </div>
-                {(['post', 'beam', 'purlin', 'ledger', 'fascia', 'gableChord', 'gableDropper'] as const).map((member) => {
+                {(['post', 'beam', 'purlin', 'ledger', 'fascia', 'gableChord', 'gableDropper', 'gableTopChord'] as const).map((member) => {
                   const conns = getConnectionsForMember(member);
                   const labels: Record<string, string> = {
                     post: 'COLUMN / POST', beam: 'RAFTER / BEAM', purlin: 'PURLIN',
                     ledger: 'LEDGER BEAM', fascia: 'FASCIA BEAM',
-                    gableChord: 'GABLE BOTTOM CHORD', gableDropper: 'GABLE DROPPER',
+                    gableChord: 'GABLE BOTTOM CHORD', gableDropper: 'GABLE DROPPER', gableTopChord: 'GABLE TOP CHORD (TRUSS)',
                   };
                   return (
                     <div key={member} style={{ marginBottom: 10 }}>

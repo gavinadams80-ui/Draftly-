@@ -36,7 +36,7 @@ export interface UtilResult {
   isRHS?: boolean;
 }
 
-export type MemberType = 'post' | 'beam' | 'purlin' | 'ledger' | 'fascia' | 'gableChord' | 'gableDropper';
+export type MemberType = 'post' | 'beam' | 'purlin' | 'ledger' | 'fascia' | 'gableChord' | 'gableDropper' | 'gableTopChord';
 
 export type MemberForm = 'open' | 'b2b' | 'rhs' | 'plate';
 
@@ -63,6 +63,7 @@ export interface MemberForms {
   fascia: MemberForm;
   gableChord: MemberForm;
   gableDropper: MemberForm;
+  gableTopChord: MemberForm;
 }
 
 export interface MemberOverrides {
@@ -73,6 +74,7 @@ export interface MemberOverrides {
   fascia: string | null;
   gableChord: string | null;
   gableDropper: string | null;
+  gableTopChord: string | null;
 }
 
 export interface ProjectConfig {

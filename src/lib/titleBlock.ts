@@ -25,7 +25,7 @@ export const DEFAULT_TITLE_BLOCK: TitleBlockData = {
   propertyAddress: '',
   council:         '',
   designedBy:      '',
-  drawnBy:         '',
+  drawnBy:         'Claude M. Day',
   checkedBy:       '',
   approvedBy:      '',
   revision:        'A',
@@ -61,8 +61,7 @@ function renderBlock(
   const bx = x, by = y;
   const rowH = H_BLOCK / 4; // 4 rows
 
-  const line = (x1: number, y1: number, x2: number, y2: number) =>
-    `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${border}" stroke-width="0.5"/>`;
+
 
   const cell = (cx: number, cy: number, cw: number, ch: number, label: string, value: string, accent = false) => {
     const lx = cx + 3, ly = cy + 8;
@@ -178,7 +177,6 @@ export function withTitleBlock(
   const innerContent = innerMatch ? innerMatch[1] : '';
 
   // ── Build A3 sheet SVG ──
-  const mono = 'DM Mono,monospace';
   const borderCol = '#6b7090';
 
   let out = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${A3_W} ${A3_H}" style="width:100%;max-width:${A3_W}px;display:block;background:#12131a;">`;

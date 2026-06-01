@@ -257,14 +257,23 @@ export function getCladdingType(id: string) {
 // ── Gable infill calculator ──
 // Determines dropper layout based on cladding selection
 export function calcGableInfill(
-  gableWidth: number,   // m — full width between gable posts
-  gableHeight: number,  // m — height at centre (rafter rise)
-  _pitch: number,       // degrees (reserved for future pitch-dependent cladding)
+  gableWidth: number,       // m — full width between gable posts
+  gableHeight: number,      // m — height at centre (full rafter rise to ridge)
+  pitch: number,            // degrees
   claddingId: string,
-  windPressure: number = 0.5  // kPa — default site wind pressure
+  windPressure: number = 0.5, // kPa — default site wind pressure
+  rafterDepthMm: number = 0,  // mm — rafter section depth (subtracts from available height)
+  chordDepthMm:  number = 0   // mm — bottom chord section depth (subtracts from base)
 ): import('@/types').GableInfillResult {
   const cladding = getCladdingType(claddingId);
   const maxSpanH = cladding.maxSpanH / 1000;  // mm → m
+
+  // Net clear height at centre = gableHeight minus rafter and chord depths
+  // Rafter bottom face is approximately (rafterDepth/2)/cos(pitch) below the centreline
+  const pitchRad = pitch * Math.PI / 180;
+  const rafterClearance = (rafterDepthMm / 1000) / Math.cos(pitchRad); // vertical clearance from rafter
+  const chordClearance  = chordDepthMm / 1000;
+  const netGableHeight  = Math.max(0.1, gableHeight - rafterClearance - chordClearance);
 
   // Calculate number of bays (panels) across the gable
   // nBays must be integer, spacing = width / nBays
@@ -281,22 +290,22 @@ export function calcGableInfill(
   const nDroppers = nBays + 1;
   const panelWidth = spacing;
 
-  // Dropper heights vary along gable — triangular profile
-  // Centre dropper = max height, edge droppers = 0 (at posts)
+  // Dropper heights vary along gable — NET clear height between rafter and bottom chord
   const dropperHeights: number[] = [];
   for (let i = 0; i < nDroppers; i++) {
-    const x = (i / (nDroppers - 1)) * gableWidth;  // position from left
+    const x = (i / (nDroppers - 1)) * gableWidth;
     const halfW = gableWidth / 2;
     const distFromCentre = Math.abs(x - halfW);
-    // Height at this position on the triangular gable
-    const h = gableHeight * (1 - distFromCentre / halfW);
-    dropperHeights.push(Math.max(h, 0));
+    // Gross height at this x, then subtract steel member depths
+    const hGross = gableHeight * (1 - distFromCentre / halfW);
+    const hNet   = Math.max(0, hGross - rafterClearance - chordClearance);
+    dropperHeights.push(hNet);
   }
 
   const maxDropperH = Math.max(...dropperHeights);
-  const avgPanelH = gableHeight * 0.5;  // average height of triangular panel
+  const avgPanelH = netGableHeight * 0.5;  // average NET height of panels
 
-  // Cladding area (sum of all triangular/rectangular panels)
+  // Cladding area — based on NET clear opening
   const claddingArea = gableWidth * avgPanelH;
 
   // Sheet count (assume sheets run vertically, 1.0m wide × up to 6.0m long)
@@ -304,8 +313,6 @@ export function calcGableInfill(
   const sheetL = 6.0;  // typical length
   const sheetsNeeded = Math.ceil(claddingArea / (sheetW * sheetL)) * 1.2;  // +20% waste
 
-  // Cold-formed angle trim: perimeter of each panel × nBays
-  // Per panel: top (panelWidth) + bottom (panelWidth) + 2 sides (avg height)
   const perimPerPanel = 2 * panelWidth + 2 * avgPanelH;
   const frameAngleM = perimPerPanel * nBays;
 

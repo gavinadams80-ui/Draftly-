@@ -166,9 +166,39 @@ monorepo once the contract has stabilised.
 development so the inner loop stays fast (no publish to test), and pin a single version in all
 consumers so sheets can't drift while separate.
 
-> **Decision still open** — captured here for the team to choose. The phased roadmap below is written
-> so Phase 1 is *identical* regardless of which coupling we pick; the choice only changes *where the
-> package physically lives*.
+> ### ✅ Decision (2026-06-06): **Option 3 — Hybrid.**
+> Shared package now, **optional** monorepo later. We get one canonical connection library while each
+> app keeps its own repo, CI and deploy flow simple and independent. The shared piece stays small and
+> grokkable — a new engineer can be told *"here's the small shared drawing engine; everything else is
+> a normal app that happens to use it."* If the package proves its value and stays healthy, we can
+> slide into a monorepo later **without changing how the apps think about the drawing contract**.
+>
+> During development, consume it via a workspace/`file:` path or git submodule so the inner loop stays
+> fast, and **pin one version across all consumers** so sheets can't drift while the repos are separate.
+> Phase 1 is identical regardless, so this choice only fixes *where the package physically lives*.
+
+## 4a. Shared-package guardrails (the quality bar)
+
+These are non-negotiable for the hybrid to stay healthy. They define what is allowed *into*
+`@draftly/drawings` and how the contract is allowed to change.
+
+1. **Tiny and pure.** No React, no HTTP, no app state — typed params in, SVG string out. The only
+   DOM-touching code is the `/pdf` export entry, kept separate so the core stays tree-shakeable.
+2. **No app-workflow leakage.** Drafting's tools/staging and Engineering's UX never enter the package.
+   The boundary is "a drawing, given parameters" — nothing about *how* either app drives it.
+3. **Versioned, additive-by-default contracts.** Every contract (connection `params`, the handoff
+   schema) is versioned and evolves additively. Breaking changes are a deliberate major bump, never an
+   accidental synchronized break across apps.
+4. **Earn your place — no dumping ground.** Code is promoted into the package only when **both apps use
+   it** or it is **clearly core to drawing**. App-specific utilities stay in the app.
+5. **Guard the boundary with tests.** SVG **snapshot tests** on the generators + **schema validation**
+   tests on the contracts, so a refactor in one app cannot silently break the other.
+
+**What "good" feels like:** an engineer imports `@draftly/drawings`, passes member sizes/options, and
+gets a reliable detail with known guarantees — like calling a well-documented standard library. A
+Drafting user drops a connection card that *always matches Engineering's sheets* instead of wondering
+if a hand-drawn detail is drifting from the structural truth. The team makes changes inside a small,
+versioned, tested kernel — not a mysterious mega-framework.
 
 ---
 
@@ -222,5 +252,5 @@ the catalog, BOM/install-time rollups from card metadata.
 The dream is ~70% pre-built: real connection generators exist, the shared-package decision is made, and the
 handoff contract is live. To finish it we: **(1)** extract `@draftly/drawings` and move the generators in
 (Model A — fast, no behaviour change), **(2)** let Engineering pull cards in with live member sizes, then
-**(3)** open visual authoring in Drafting via declarative templates (Model B). Coupling (monorepo vs shared
-package vs hybrid) is the one open call — Phase 1 is the same either way.
+**(3)** open visual authoring in Drafting via declarative templates (Model B). **Coupling is decided:
+hybrid** — a small, pure, versioned, tested shared package now; optional monorepo later.

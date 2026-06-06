@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 
-export const HANDOFF_VERSION = '1.0.0';
+export const HANDOFF_VERSION = '1.1.0';
 
 // Intelligence emits numbers inconsistently (sometimes "3.5", sometimes 3.5,
 // sometimes ""). Coerce anything number-like to a number, everything else to undefined.
@@ -33,6 +33,23 @@ const OffsetsSchema = z.object({
 }).partial();
 
 const LatLngSchema = z.object({ lat: z.number(), lng: z.number() });
+
+// `attachment` is canonically a string ('freestanding' | 'attached' | 'three-side').
+// Older Intelligence builds emitted it as a rich object ({ sides, lengths, count }),
+// which hard-failed the import ("attachment: expected string, received object").
+// Coerce any object form down to the canonical string so a stale export degrades
+// gracefully instead of breaking the whole load.
+const attachmentish = z.preprocess((v) => {
+  if (typeof v === 'string') return v;
+  if (v && typeof v === 'object') {
+    const o = v as { count?: number; sides?: Record<string, unknown> };
+    const count = typeof o.count === 'number'
+      ? o.count
+      : Object.values(o.sides ?? {}).filter(Boolean).length;
+    return count === 0 ? 'freestanding' : count >= 3 ? 'three-side' : 'attached';
+  }
+  return undefined;
+}, z.string().optional());
 
 // Overlays may arrive as a plain name string (current Intelligence output) or,
 // once Intelligence enriches the handoff, as a structured object carrying the
@@ -92,7 +109,14 @@ export const HandoffSchema = z.object({
       footprint: z.array(LatLngSchema).optional(),  // placed corners (exact site-plan position)
       rotationDeg: numish,                          // clockwise from north
     }).partial().optional(),
-    attachment: z.string().optional(),
+    attachment: attachmentish,
+    // Rich per-side attachment detail (which sides are fixed to the dwelling + connection
+    // lengths). `attachment` (above) stays the canonical string; this carries the extra detail.
+    attachmentDetail: z.object({
+      sides: z.record(z.string(), z.boolean()).optional(),
+      lengths: z.record(z.string(), z.number().nullable()).optional(),
+      count: z.number().optional(),
+    }).partial().optional(),
     northBearing: z.number().optional(),
     offsets: OffsetsSchema.optional(),    // ACTUAL measured setbacks from the siting tool
     ridgeBearing: z.number().nullable().optional(),

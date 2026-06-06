@@ -213,6 +213,14 @@ const PROJECT_TYPE_MAP: Record<string, BuildingType> = {
   'granny flat': 'extension', 'secondary dwelling': 'extension',
 };
 
+// ── Wizard steps (top nav + prev/next at bottom) ──
+const STEPS = [
+  { id: 'structure', label: 'Structure' },
+  { id: 'members',   label: 'Member Sizing' },
+  { id: 'frames',    label: 'Portal Frames' },
+  { id: 'drawings',  label: 'Drawings' },
+] as const;
+
 // ── Main App ──
 export default function App() {
   const [config, setConfig] = useState<ProjectConfig>(DEFAULT_CONFIG);
@@ -569,6 +577,16 @@ export default function App() {
 
       {/* ── MAIN ── */}
       <main className="app-main">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          {/* ── STEP NAV (top, sticky) ── */}
+          <TabsList className="tabs-custom" style={{ position: 'sticky', top: 0, zIndex: 30, background: 'var(--bg, #111210)' }}>
+            {STEPS.map((s, idx) => (
+              <TabsTrigger key={s.id} value={s.id} className="tab-trigger">
+                <span style={{ opacity: 0.5, marginRight: 6, fontVariantNumeric: 'tabular-nums' }}>{idx + 1}</span>{s.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+
         {/* ── INFO PANEL ── */}
         <div className="info-panel">
           Each structural member is designed independently for the selected material system. Use{' '}
@@ -629,31 +647,40 @@ export default function App() {
             background: 'var(--surface)', border: `1px solid ${compliance.failCount > 0 ? 'rgba(224,108,108,0.45)' : 'rgba(109,184,122,0.4)'}`,
             borderRadius: '8px', padding: '12px 14px', marginBottom: '16px',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
               <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--accent)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
                 As-Designed Compliance
+              </span>
+              <span style={{ fontSize: '9px', fontFamily: 'var(--mono)', color: 'var(--text-muted)' }}>
+                engineering re-check
               </span>
               <span style={{
                 fontSize: '11px', fontFamily: 'var(--mono)', fontWeight: 700, padding: '2px 8px', borderRadius: '4px',
                 color: compliance.failCount > 0 ? '#e06c6c' : '#6db87a',
                 background: compliance.failCount > 0 ? 'rgba(224,108,108,0.12)' : 'rgba(109,184,122,0.12)',
               }}>
-                {compliance.failCount > 0
-                  ? `${compliance.failCount} FAIL`
-                  : `${compliance.passCount}/${compliance.assessable} PASS`}
+                {compliance.passCount}/{compliance.assessable} PASS
+                {compliance.failCount > 0 && ` · ${compliance.failCount} FAIL`}
               </span>
               {compliance.unknownCount > 0 && (
                 <Chip label={`${compliance.unknownCount} need data`} />
               )}
               {siteConstraints?.importedCompliance && (
-                <span style={{ fontSize: '9px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', marginLeft: 'auto' }}>
-                  Intelligence: {siteConstraints.importedCompliance.approved ? '✅ approved' : '❌ issues'}
+                <span
+                  title="The verdict Site Intelligence recorded when the structure was first positioned on the lot. This panel re-checks the structure as it is now engineered, which can differ."
+                  style={{ fontSize: '9px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', marginLeft: 'auto', cursor: 'help' }}
+                >
+                  Site Intelligence (at siting): {siteConstraints.importedCompliance.approved ? '✅ approved' : '❌ issues'}
                   {siteConstraints.importedCompliance.passCount !== undefined &&
                     ` (${siteConstraints.importedCompliance.passCount}/${siteConstraints.importedCompliance.totalChecks})`}
                 </span>
               )}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px,1fr) 1fr 1fr 56px', gap: '4px 12px', fontSize: '11px', fontFamily: 'var(--mono)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.5 }}>
+              How the structure <em>as engineered here</em> measures against {siteConstraints?.council || 'the council'}'s planning rules.{' '}
+              <strong style={{ color: '#6db87a' }}>PASS</strong> = the rule is satisfied — setbacks must be <strong>≥</strong> the required distance; height and site coverage must be <strong>≤</strong> the limit.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(110px,0.9fr) 0.8fr minmax(150px,1.3fr) 64px', gap: '5px 12px', fontSize: '11px', fontFamily: 'var(--mono)', alignItems: 'baseline' }}>
               <div style={{ color: 'var(--text-muted)', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Check</div>
               <div style={{ color: 'var(--text-muted)', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Required</div>
               <div style={{ color: 'var(--text-muted)', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>As designed</div>
@@ -662,9 +689,12 @@ export default function App() {
                 const col = c.pass === false ? '#e06c6c' : c.pass === true ? '#6db87a' : 'var(--text-muted)';
                 return (
                   <Fragment key={c.label}>
-                    <div style={{ color: 'var(--text)' }}>{c.label}</div>
+                    <div style={{ color: 'var(--text)', cursor: 'help' }} title={c.rule}>{c.label}</div>
                     <div style={{ color: 'var(--text-muted)' }}>{c.required}</div>
-                    <div style={{ color: 'var(--text)' }}>{c.actual}</div>
+                    <div style={{ color: 'var(--text)' }}>
+                      {c.actual}
+                      {c.note && <span style={{ color: col, marginLeft: 6, fontSize: '10px' }}>({c.note})</span>}
+                    </div>
                     <div style={{ color: col, textAlign: 'right', fontWeight: 700 }}>
                       {c.pass === false ? '✗ FAIL' : c.pass === true ? '✓ PASS' : '—'}
                     </div>
@@ -672,19 +702,20 @@ export default function App() {
                 );
               })}
             </div>
+            {/* Reconcile the two verdicts so 5/5-approved-but-1-fail isn't confusing */}
+            {siteConstraints?.importedCompliance?.approved && compliance.failCount > 0 && (
+              <div style={{
+                fontSize: '10px', color: '#e06c6c', marginTop: 10, padding: '6px 10px',
+                background: 'rgba(224,108,108,0.08)', border: '1px solid rgba(224,108,108,0.25)', borderRadius: '6px', lineHeight: 1.5,
+              }}>
+                ⚠ Site Intelligence approved this at the <strong>siting</strong> stage, but the <strong>as-engineered</strong> re-check finds {compliance.failCount} issue{compliance.failCount > 1 ? 's' : ''}. The dimensions or measured setbacks have changed since siting — resolve {compliance.failCount > 1 ? 'these' : 'this'} before submission.
+              </div>
+            )}
             <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 8 }}>
-              Re-checked against the as-engineered structure (ridge from pitch + span). Setbacks are the measured offsets from Site Intelligence.
+              Ridge height is computed from the engineered pitch + clear span. Setbacks are the measured offsets carried over from Site Intelligence. Hover a check for the rule applied.
             </div>
           </div>
         )}
-
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="tabs-custom">
-            <TabsTrigger value="structure" className="tab-trigger">Structure</TabsTrigger>
-            <TabsTrigger value="members" className="tab-trigger">Member Sizing</TabsTrigger>
-            <TabsTrigger value="frames" className="tab-trigger">Portal Frames</TabsTrigger>
-            <TabsTrigger value="drawings" className="tab-trigger">Drawings</TabsTrigger>
-          </TabsList>
 
           {/* ── TAB: STRUCTURE CONFIG ── */}
           <TabsContent value="structure">
@@ -1525,6 +1556,37 @@ export default function App() {
               </div>
             </div>
           </TabsContent>
+
+          {/* ── STEP PREV / NEXT (bottom) ── */}
+          {(() => {
+            const idx = STEPS.findIndex(s => s.id === activeTab);
+            const prev = idx > 0 ? STEPS[idx - 1] : null;
+            const next = idx < STEPS.length - 1 ? STEPS[idx + 1] : null;
+            return (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                <button
+                  className="btn-ghost"
+                  onClick={() => prev && setActiveTab(prev.id)}
+                  style={{ visibility: prev ? 'visible' : 'hidden', fontSize: '12px', padding: '8px 16px', fontFamily: 'var(--mono)' }}
+                >
+                  ← {prev?.label}
+                </button>
+                <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                  Step {idx + 1} of {STEPS.length}
+                </span>
+                {next ? (
+                  <button
+                    onClick={() => setActiveTab(next.id)}
+                    style={{ fontSize: '12px', padding: '8px 18px', background: 'var(--accent)', color: '#111210', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--mono)', whiteSpace: 'nowrap' }}
+                  >
+                    {next.label} →
+                  </button>
+                ) : (
+                  <span style={{ fontSize: '11px', fontFamily: 'var(--mono)', color: '#6db87a', whiteSpace: 'nowrap' }}>Final step ✓</span>
+                )}
+              </div>
+            );
+          })()}
         </Tabs>
       </main>
     </div>

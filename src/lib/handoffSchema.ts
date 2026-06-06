@@ -32,6 +32,20 @@ const OffsetsSchema = z.object({
   right: numish,
 }).partial();
 
+// Overlays may arrive as a plain name string (current Intelligence output) or,
+// once Intelligence enriches the handoff, as a structured object carrying the
+// overlay code, type, bushfire BAL level, specific requirements and a source URL.
+const OverlayObjectSchema = z.object({
+  name: z.string().optional(),
+  code: z.string().optional(),
+  type: z.string().optional(),
+  level: z.string().optional(),
+  requirements: z.array(z.string()).optional(),
+  source_url: z.string().optional(),
+}).partial();
+const OverlaySchema = z.union([z.string(), OverlayObjectSchema]);
+export type HandoffOverlay = z.infer<typeof OverlaySchema>;
+
 export const HandoffSchema = z.object({
   site: z.object({
     fullAddress: z.string().optional(),
@@ -48,7 +62,7 @@ export const HandoffSchema = z.object({
     max_height: numish,        // m — allowed building height
     site_coverage: numish,     // % — max site coverage
     setbacks: SetbacksSchema.optional(),  // required planning setbacks
-    overlays: z.array(z.string()).optional(),
+    overlays: z.array(OverlaySchema).optional(),
     confidence: z.string().optional(),
     source_url: z.string().optional(),
     notes: z.string().optional(),

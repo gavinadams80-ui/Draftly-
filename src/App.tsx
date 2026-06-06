@@ -24,6 +24,7 @@ import { generateWallSectionSVG } from '@/lib/wallSection';
 import { generateFullElevationSVG } from '@/lib/fullElevation';
 import { parseHandoff } from '@/lib/handoffSchema';
 import { checkAsDesigned, summarise } from '@/lib/compliance';
+import { normalizeOverlays, getOverlayGuidance, type NormalizedOverlay } from '@/lib/overlays';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -200,7 +201,7 @@ interface SiteConstraints {
   offsets?: { front?: number; rear?: number; left?: number; right?: number }; // actual measured
   siteCoverage?: number; // %
   siteAreaM2?: number;   // lot area from siting tool
-  overlays?: string[];
+  overlays?: NormalizedOverlay[];
   confidence?: string;
   importedCompliance?: { approved?: boolean; passCount?: number; totalChecks?: number };
 }
@@ -307,7 +308,7 @@ export default function App() {
         offsets: o ? { front: o.front, rear: o.rear, left: o.left, right: o.right } : undefined,
         siteCoverage: r.site_coverage,
         siteAreaM2: payload.boundaries?.site?.areaM2 ?? undefined,
-        overlays: r.overlays,
+        overlays: normalizeOverlays(r.overlays),
         confidence: r.confidence,
         importedCompliance: payload.compliance ? {
           approved: payload.compliance.approved,
@@ -629,7 +630,7 @@ export default function App() {
             {siteConstraints.siteCoverage !== undefined && (
               <Chip label={`Cov: ${siteConstraints.siteCoverage}%`} />
             )}
-            {siteConstraints.overlays?.map(o => <Chip key={o} label={o} warn />)}
+            {siteConstraints.overlays?.map(o => <Chip key={o.name} label={o.name} warn />)}
             {siteConstraints.confidence === 'low' && (
               <Chip label="Low confidence" warn />
             )}
@@ -713,6 +714,89 @@ export default function App() {
             )}
             <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 8 }}>
               Ridge height is computed from the engineered pitch + clear span. Setbacks are the measured offsets carried over from Site Intelligence. Hover a check for the rule applied.
+            </div>
+          </div>
+        )}
+
+        {/* ── SITE OVERLAYS — ACTION REQUIRED ── */}
+        {siteConstraints?.overlays && siteConstraints.overlays.length > 0 && (
+          <div style={{
+            background: 'var(--surface)', border: '1px solid rgba(224,108,108,0.35)',
+            borderRadius: '8px', padding: '12px 14px', marginBottom: '16px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--accent)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                Site Overlays — Action Required
+              </span>
+              <span style={{ fontSize: '9px', fontFamily: 'var(--mono)', color: 'var(--text-muted)' }}>
+                {siteConstraints.overlays.length} flagged
+              </span>
+            </div>
+            <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+              These planning overlays apply extra controls to the site. Each is summarised below with what it means and the steps to keep your design compliant. Always confirm the specifics with {siteConstraints.council || 'your council'}.
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {siteConstraints.overlays.map((o) => {
+                const g = getOverlayGuidance(o);
+                const sev = g.severity === 'critical' ? '#e06c6c' : g.severity === 'caution' ? 'var(--accent)' : 'var(--text-muted)';
+                const sevBg = g.severity === 'critical' ? 'rgba(224,108,108,0.12)' : g.severity === 'caution' ? 'rgba(201,168,76,0.14)' : 'rgba(255,255,255,0.06)';
+                return (
+                  <div key={o.name} style={{
+                    background: 'var(--surface2)', borderRadius: '6px', padding: '12px',
+                    borderLeft: `3px solid ${sev}`, border: '1px solid var(--border)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '13px', color: 'var(--text)', fontWeight: 600 }}>{g.title}</span>
+                      <span style={{
+                        fontSize: '9px', fontFamily: 'var(--mono)', fontWeight: 700, padding: '2px 8px', borderRadius: '4px',
+                        color: sev, background: sevBg, textTransform: 'uppercase', letterSpacing: '0.04em',
+                      }}>
+                        {g.severityLabel}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.55, marginBottom: 10 }}>
+                      {g.whatItMeans}
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
+                      <div>
+                        <div style={{ fontSize: '9px', color: 'var(--accent)', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                          What it means for your design
+                        </div>
+                        <ul style={{ margin: 0, paddingLeft: 16, fontSize: '11px', color: 'var(--text)', lineHeight: 1.6 }}>
+                          {g.designImplications.map((d, i) => <li key={i}>{d}</li>)}
+                        </ul>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: '9px', color: '#6db87a', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                          Your action plan
+                        </div>
+                        <ol style={{ margin: 0, paddingLeft: 18, fontSize: '11px', color: 'var(--text)', lineHeight: 1.6 }}>
+                          {g.actions.map((a, i) => <li key={i}>{a}</li>)}
+                        </ol>
+                      </div>
+
+                      {g.draftlyHelps && (
+                        <div style={{
+                          fontSize: '10px', color: 'var(--text)', lineHeight: 1.5,
+                          background: 'rgba(109,184,122,0.08)', border: '1px solid rgba(109,184,122,0.25)',
+                          borderRadius: '6px', padding: '8px 10px',
+                        }}>
+                          <strong style={{ color: '#6db87a' }}>✓ Draftly helps:</strong> {g.draftlyHelps}
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 10, lineHeight: 1.5 }}>
+                      Refs: {g.standards.join(' · ')}
+                      {g.sourceUrl && <> · <a href={g.sourceUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>council source</a></>}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

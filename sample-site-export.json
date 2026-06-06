@@ -14,7 +14,20 @@
     "max_height": "3.6",
     "site_coverage": "60",
     "setbacks": { "front": "6", "side": "1.0", "rear": "3" },
-    "overlays": ["Bushfire Management Overlay"],
+    "overlays": [
+      {
+        "name": "Bushfire Management Overlay",
+        "code": "BMO",
+        "type": "bushfire",
+        "level": "BAL-29",
+        "requirements": [
+          "Defendable space of 10 m to be maintained around the structure",
+          "Static water supply of 10,000 L for firefighting"
+        ],
+        "source_url": "https://www.planning.vic.gov.au"
+      },
+      "Heritage Overlay HO123"
+    ],
     "confidence": "high"
   },
   "boundaries": {

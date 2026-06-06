@@ -25,6 +25,8 @@ import { generateFullElevationSVG } from '@/lib/fullElevation';
 import { parseHandoff } from '@/lib/handoffSchema';
 import { checkAsDesigned, summarise } from '@/lib/compliance';
 import { normalizeOverlays, getOverlayGuidance, type NormalizedOverlay } from '@/lib/overlays';
+import { generateSitePlanSVG, type LatLng } from '@/lib/sitePlan';
+import type { ExportSheet } from '@/lib/exportPdf';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -204,6 +206,10 @@ interface SiteConstraints {
   overlays?: NormalizedOverlay[];
   confidence?: string;
   importedCompliance?: { approved?: boolean; passCount?: number; totalChecks?: number };
+  // Site-plan geometry (drawn by Engineering; sent by Intelligence)
+  lotPts?: LatLng[];
+  footprint?: LatLng[];
+  frontBoundaryIndex?: number;
 }
 
 // Map Intelligence projectType strings → Engineering BuildingType enum
@@ -310,6 +316,9 @@ export default function App() {
         siteAreaM2: payload.boundaries?.site?.areaM2 ?? undefined,
         overlays: normalizeOverlays(r.overlays),
         confidence: r.confidence,
+        lotPts: payload.boundaries?.site?.lotPts,
+        footprint: payload.boundaries?.building?.footprint,
+        frontBoundaryIndex: payload.boundaries?.site?.frontBoundaryIndex,
         importedCompliance: payload.compliance ? {
           approved: payload.compliance.approved,
           passCount: payload.compliance.passCount,
@@ -360,6 +369,8 @@ export default function App() {
     if (!checks.length) return null;
     return summarise(checks);
   }, [siteConstraints, config.width, config.depth, config.height, config.pitch, config.roofType, standoff]);
+
+  const [isExporting, setIsExporting] = useState(false);
 
   // ── Engineering calculations ──
   const calc = useMemo(() => {
@@ -488,6 +499,105 @@ export default function App() {
       dropperHeight, netDropperH, topChordAxialKN,
     };
   }, [config, forms, overrides, selectedProfile]);
+
+  // ── Submission drawing set — single source for the on-screen sheets and the PDF ──
+  const submissionSheets = useMemo<(ExportSheet & { description?: string })[]>(() => {
+    const sheets: (ExportSheet & { description?: string })[] = [];
+
+    // Site plan — only when Intelligence has sent lot geometry.
+    if (siteConstraints?.lotPts && siteConstraints.lotPts.length >= 3) {
+      const planSvg = generateSitePlanSVG({
+        lotPts: siteConstraints.lotPts,
+        areaM2: siteConstraints.siteAreaM2,
+        footprint: siteConstraints.footprint,
+        offsets: siteConstraints.offsets,
+        frontBoundaryIndex: siteConstraints.frontBoundaryIndex,
+        council: siteConstraints.council,
+        buildingWidth: config.width,
+        buildingDepth: config.depth,
+      });
+      if (planSvg) {
+        sheets.push({
+          title: 'Site Plan — Structure on Lot', number: 'S-000',
+          svg: withTitleBlock(planSvg, titleBlock, 'Site Plan — Structure on Lot', 'S-000', 1, 1, 'NTS'),
+          description: 'Lot boundary with the proposed structure positioned to the measured setbacks. Boundary lengths, lot area and north shown.',
+        });
+      }
+    }
+
+    const planDesc =
+      'Structure in plan relative to the existing dwelling. ' +
+      (config.attachment === 'three-side' ? 'Three-side attached — wraps the corner of the house. '
+        : config.attachment === 'attached' ? 'Attached — fixed along one wall. '
+        : 'Freestanding — independent structure with 4 posts. ') +
+      'Portal frames shown with post locations and purlin lines.';
+
+    sheets.push({
+      title: 'Plan View — Structure Layout', number: 'S-001',
+      svg: withTitleBlock(generateBuildingPlanSVG(
+        config.width, config.depth, config.height, config.pitch,
+        config.attachment, config.portalFrameCount, config.roofType === 'gable',
+        standoff / 1000, leftSetback, rightSetback, calc.purlinSpacing, northRotation,
+      ), titleBlock, 'Plan View — Structure Layout', 'S-001', 1, 1, 'NTS'),
+      description: planDesc,
+    });
+
+    sheets.push({
+      title: 'Roof Geometry Diagram', number: 'S-002',
+      svg: withTitleBlock(generateRoofGeometrySVG(
+        config.width, config.pitch, config.height, config.roofType === 'gable',
+        calc.selBeam?.sec.size ?? null, calc.selLedger?.sec.size ?? null, standoff / 1000,
+      ), titleBlock, 'Roof Geometry — Side View', 'S-002', 1, 1, 'NTS'),
+      description: 'Triangular geometry showing span, rise and rafter length. Pitch angles marked; gable apex = half-span × tan(pitch).',
+    });
+
+    sheets.push({
+      title: 'Section A-A — Portal Frame 1 · Back (House Connection)', number: 'S-003',
+      svg: withTitleBlock(generateWallSectionSVG(
+        config.depth * 1000, config.pitch,
+        calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
+        true, calc.selLedger?.sec.d ?? 150, 'back',
+      ), titleBlock, 'Section A-A — PF1 Back (House Connection)', 'S-003', 1, 3, 'NTS'),
+    });
+
+    sheets.push({
+      title: 'Section A-A — Portal Frame 2 · Intermediate (Middle)', number: 'S-004',
+      svg: withTitleBlock(generateWallSectionSVG(
+        config.depth * 1000, config.pitch,
+        calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
+      ), titleBlock, 'Section A-A — PF2 Intermediate', 'S-004', 2, 3, 'NTS'),
+    });
+
+    sheets.push({
+      title: 'Section A-A — Portal Frame 3 · Front (Fascia End)', number: 'S-005',
+      svg: withTitleBlock(generateWallSectionSVG(
+        config.depth * 1000, config.pitch,
+        calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
+        true, calc.selLedger?.sec.d ?? 150, 'front', calc.selPost?.sec.d ?? 100,
+      ), titleBlock, 'Section A-A — PF3 Front (Fascia End)', 'S-005', 3, 3, 'NTS'),
+    });
+
+    sheets.push({
+      title: 'Full Detail Elevation — Wall (A-A) · Socket Joint (B-B) · Post (C-C)', number: 'S-006',
+      svg: withTitleBlock(generateFullElevationSVG(), titleBlock, 'Full Detail Elevation', 'S-006', 1, 1, 'NTS'),
+      description: 'Three-panel detail elevation per AS1100. Left: dwelling wall at eave with 65×65 SHS standoff. Centre: socket joint — 50×50 stub with packers. Right: corner post base with concrete pad and anchors.',
+    });
+
+    return sheets;
+  }, [config, standoff, leftSetback, rightSetback, calc, northRotation, titleBlock, siteConstraints]);
+
+  const handleExportPDF = useCallback(async () => {
+    setIsExporting(true);
+    try {
+      const { exportSheetsToPDF } = await import('@/lib/exportPdf'); // lazy: keeps jsPDF out of the initial bundle
+      const base = (titleBlock.projectName || 'draftly').replace(/[^\w-]+/g, '-').slice(0, 40).replace(/^-+|-+$/g, '');
+      await exportSheetsToPDF(submissionSheets, `${base || 'draftly'}-drawings.pdf`);
+    } catch (err) {
+      alert('PDF export failed: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsExporting(false);
+    }
+  }, [submissionSheets, titleBlock.projectName]);
 
   // ── Gable infill calculation ──
   const gableInfill = useMemo(() => {
@@ -1420,106 +1530,37 @@ export default function App() {
           {/* ── TAB: DRAWINGS ── */}
           <TabsContent value="drawings">
             <div className="config-grid" style={{ gridTemplateColumns: '1fr' }}>
-              {/* Plan View */}
-              <div className="config-card">
-                <label className="config-label">Plan View — Structure Layout</label>
-                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
-                  <div dangerouslySetInnerHTML={{
-                    __html: withTitleBlock(
-                      generateBuildingPlanSVG(
-                        config.width, config.depth, config.height, config.pitch,
-                        config.attachment, config.portalFrameCount, config.roofType === 'gable',
-                        standoff / 1000, leftSetback, rightSetback, calc.purlinSpacing, northRotation
-                      ),
-                      titleBlock, 'Plan View — Structure Layout', 'S-001', 1, 1, 'NTS'
-                    )
-                  }} />
+              {/* Export submission set */}
+              <div className="config-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <label className="config-label" style={{ marginBottom: 2 }}>Submission Drawing Set</label>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)' }}>
+                    {submissionSheets.length} A3 sheets · exports to one multi-page PDF with title blocks
+                  </div>
                 </div>
-                <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', lineHeight: 1.6 }}>
-                  Shows the structure in plan view relative to the existing dwelling.
-                  {config.attachment === 'three-side' && ' Three-side attached — structure wraps around the corner of the house.'}
-                  {config.attachment === 'attached' && ' Attached — structure fixed along one wall of the house.'}
-                  {config.attachment === 'freestanding' && ' Freestanding — independent structure with 4 posts.'}
-                  Portal frames shown with post locations and purlin lines.
-                </div>
+                <button
+                  onClick={handleExportPDF}
+                  disabled={isExporting}
+                  style={{ fontSize: '12px', padding: '10px 20px', background: 'var(--accent)', color: '#111210', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: isExporting ? 'wait' : 'pointer', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', opacity: isExporting ? 0.6 : 1 }}
+                >
+                  {isExporting ? 'Generating…' : '⤓ Generate Submission PDF'}
+                </button>
               </div>
 
-              {/* Roof Geometry */}
-              <div className="config-card">
-                <label className="config-label">Roof Geometry Diagram</label>
-                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
-                  <div dangerouslySetInnerHTML={{
-                    __html: withTitleBlock(
-                      generateRoofGeometrySVG(
-                        config.width, config.pitch, config.height, config.roofType === 'gable',
-                        calc.selBeam?.sec.size ?? null,
-                        calc.selLedger?.sec.size ?? null,
-                        standoff / 1000
-                      ),
-                      titleBlock, 'Roof Geometry — Side View', 'S-002', 1, 1, 'NTS'
-                    )
-                  }} />
+              {/* Title-blocked sheets — single source: submissionSheets (also used by the PDF export) */}
+              {submissionSheets.map((s) => (
+                <div className="config-card" key={s.number}>
+                  <label className="config-label">{s.number} · {s.title}</label>
+                  <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
+                    <div dangerouslySetInnerHTML={{ __html: s.svg }} />
+                  </div>
+                  {s.description && (
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', lineHeight: 1.6 }}>
+                      {s.description}
+                    </div>
+                  )}
                 </div>
-                <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', lineHeight: 1.6 }}>
-                  Triangular geometry showing span, rise, and rafter length. Pitch angles marked.
-                  Gable height at apex calculated from half-span × tan(pitch).
-                </div>
-              </div>
-
-              {/* ── Portal Frame 1 — Back (House Connection) ── */}
-              <div className="config-card">
-                <label className="config-label">Section A-A — Portal Frame 1 · Back (House Connection)</label>
-                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
-                  <div dangerouslySetInnerHTML={{ __html: withTitleBlock(generateWallSectionSVG(
-                        config.depth * 1000, config.pitch,
-                        calc.selPurlin?.sec.d ?? 100,
-                        calc.selPurlin?.sec.b ?? 50,
-                        calc.selPurlin?.sec.t ?? 1.5,
-                        true, calc.selLedger?.sec.d ?? 150, 'back'
-                      ), titleBlock, 'Section A-A — PF1 Back (House Connection)', 'S-003', 1, 3, 'NTS') }} />
-                </div>
-              </div>
-
-              {/* ── Portal Frame 2 — Intermediate (Middle) ── */}
-              <div className="config-card">
-                <label className="config-label">Section A-A — Portal Frame 2 · Intermediate (Middle)</label>
-                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
-                  <div dangerouslySetInnerHTML={{ __html: withTitleBlock(generateWallSectionSVG(
-                        config.depth * 1000, config.pitch,
-                        calc.selPurlin?.sec.d ?? 100,
-                        calc.selPurlin?.sec.b ?? 50,
-                        calc.selPurlin?.sec.t ?? 1.5
-                      ), titleBlock, 'Section A-A — PF2 Intermediate', 'S-004', 2, 3, 'NTS') }} />
-                </div>
-              </div>
-
-              {/* ── Portal Frame 3 — Front (Fascia End) ── */}
-              <div className="config-card">
-                <label className="config-label">Section A-A — Portal Frame 3 · Front (Fascia End)</label>
-                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
-                  <div dangerouslySetInnerHTML={{ __html: withTitleBlock(generateWallSectionSVG(
-                        config.depth * 1000, config.pitch,
-                        calc.selPurlin?.sec.d ?? 100,
-                        calc.selPurlin?.sec.b ?? 50,
-                        calc.selPurlin?.sec.t ?? 1.5,
-                        true, calc.selLedger?.sec.d ?? 150, 'front',
-                        calc.selPost?.sec.d ?? 100
-                      ), titleBlock, 'Section A-A — PF3 Front (Fascia End)', 'S-005', 3, 3, 'NTS') }} />
-                </div>
-              </div>
-
-              {/* Full Detail Elevation Assembly */}
-              <div className="config-card">
-                <label className="config-label">Full Detail Elevation — Wall (A-A) · Socket Joint (B-B) · Post (C-C)</label>
-                <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)', marginBottom: 8 }}>
-                  <div dangerouslySetInnerHTML={{ __html: withTitleBlock(generateFullElevationSVG(), titleBlock, 'Full Detail Elevation', 'S-004', 1, 1, 'NTS') }} />
-                </div>
-                <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', lineHeight: 1.6 }}>
-                  Three-panel detail elevation per AS1100. Left: existing dwelling wall at eave with 65×65 SHS standoff.
-                  Centre: socket joint detail — 50×50 stub with packers, rafter slips over. Right: corner post base
-                  with concrete pad and anchor bolts. Sections A-A, B-B, C-C.
-                </div>
-              </div>
+              ))}
 
               {/* Connection Detail Drawings */}
               <div className="config-card">

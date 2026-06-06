@@ -31,7 +31,16 @@
     "confidence": "high"
   },
   "boundaries": {
-    "site": { "areaM2": 630, "lotPts": [] },
+    "site": {
+      "areaM2": 630,
+      "frontBoundaryIndex": 0,
+      "lotPts": [
+        { "lat": -38.0400000, "lng": 145.3000000 },
+        { "lat": -38.0400000, "lng": 145.3002052 },
+        { "lat": -38.0396834, "lng": 145.3002052 },
+        { "lat": -38.0396834, "lng": 145.3000000 }
+      ]
+    },
     "building": {
       "width": 9.27,
       "depth": 5.77,
@@ -39,13 +48,26 @@
       "fasciaHeight": 2.8,
       "pitch": 10,
       "ridgeHeight": 3.49,
-      "height": 3.49
+      "height": 3.49,
+      "rotationDeg": 0,
+      "footprint": [
+        { "lat": -38.0399412, "lng": 145.3000103 },
+        { "lat": -38.0399412, "lng": 145.3001159 },
+        { "lat": -38.0398890, "lng": 145.3001159 },
+        { "lat": -38.0398890, "lng": 145.3000103 }
+      ]
     },
     "attachment": "three-side",
     "northBearing": 12,
     "offsets": { "front": 6.5, "rear": 4.0, "left": 0.9, "right": 1.5 },
     "ridgeBearing": 92,
-    "ridgeLength": 5.77
+    "ridgeLength": 5.77,
+    "ridge": {
+      "from": { "lat": -38.0399412, "lng": 145.3000631 },
+      "to": { "lat": -38.0398890, "lng": 145.3000631 },
+      "bearing": 0,
+      "lengthM": 5.77
+    }
   },
   "compliance": {
     "approved": true,

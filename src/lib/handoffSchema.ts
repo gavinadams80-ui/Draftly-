@@ -32,6 +32,8 @@ const OffsetsSchema = z.object({
   right: numish,
 }).partial();
 
+const LatLngSchema = z.object({ lat: z.number(), lng: z.number() });
+
 // Overlays may arrive as a plain name string (current Intelligence output) or,
 // once Intelligence enriches the handoff, as a structured object carrying the
 // overlay code, type, bushfire BAL level, specific requirements and a source URL.
@@ -71,7 +73,13 @@ export const HandoffSchema = z.object({
   boundaries: z.object({
     site: z.object({
       areaM2: z.number().nullable().optional(),
-      lotPts: z.array(z.object({ lat: z.number(), lng: z.number() })).optional(),
+      lotPts: z.array(LatLngSchema).optional(),
+      frontBoundaryIndex: z.number().optional(),  // which lotPts edge is the labelled front
+      aerial: z.object({                          // optional satellite context underlay
+        imageBase64: z.string().optional(),
+        url: z.string().optional(),
+        bbox: z.array(z.number()).optional(),     // [w, s, e, n]
+      }).partial().optional(),
     }).partial().optional(),
     building: z.object({
       width: numish,
@@ -81,12 +89,20 @@ export const HandoffSchema = z.object({
       pitch: numish,
       ridgeHeight: numish,
       height: numish,          // highest point (ridge, for compliance)
+      footprint: z.array(LatLngSchema).optional(),  // placed corners (exact site-plan position)
+      rotationDeg: numish,                          // clockwise from north
     }).partial().optional(),
     attachment: z.string().optional(),
     northBearing: z.number().optional(),
     offsets: OffsetsSchema.optional(),    // ACTUAL measured setbacks from the siting tool
     ridgeBearing: z.number().nullable().optional(),
     ridgeLength: z.number().nullable().optional(),
+    ridge: z.object({                     // ridge line endpoints (for site plan)
+      from: LatLngSchema.optional(),
+      to: LatLngSchema.optional(),
+      bearing: numish,
+      lengthM: numish,
+    }).partial().optional(),
   }).partial().optional(),
 
   compliance: z.object({

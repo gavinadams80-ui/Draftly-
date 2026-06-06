@@ -94,6 +94,7 @@ function MemberCard({
   availableForms: { value: string; label: string }[];
   currentForm: string;
 }) {
+  const [open, setOpen] = useState(false);
   if (!result) {
     return (
       <Card style={{ background: 'var(--surface2)', borderColor: 'var(--border2)' }}>
@@ -119,60 +120,77 @@ function MemberCard({
   return (
     <Card style={{ background: bg, border: `1.5px solid ${borderCol}` }}>
       <CardContent className="p-3">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        {/* Header — click to expand/collapse */}
+        <button
+          onClick={() => setOpen((o) => !o)}
+          style={{ all: 'unset', cursor: 'pointer', boxSizing: 'border-box', width: '100%', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}
+          title={open ? 'Collapse' : 'Expand for full detail'}
+        >
           <span style={{ fontSize: '14px' }}>{icon}</span>
-          <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase', flex: 1 }}>
+          <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {label}
           </span>
           <StatusBadge util={u} />
-        </div>
+          <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginLeft: 2 }}>{open ? '▾' : '▸'}</span>
+        </button>
 
-        <div style={{ background: svgBg, borderRadius: '4px', padding: '4px', marginBottom: 8, border: `1px solid ${borderCol}` }}>
+        {/* Section thumbnail — clipped to a tidy height when collapsed */}
+        <div
+          onClick={() => setOpen((o) => !o)}
+          style={{ background: svgBg, borderRadius: '4px', padding: '4px', marginBottom: 8, border: `1px solid ${borderCol}`, maxHeight: open ? 'none' : 116, overflow: 'hidden', cursor: 'pointer' }}
+        >
           <div dangerouslySetInnerHTML={{ __html: svgHtml }} />
         </div>
 
-        <div style={{ fontSize: '13px', fontFamily: 'var(--mono)', color: 'var(--text)', fontWeight: 600, marginBottom: 2 }}>
-          {result.sec.size}
+        {/* Identity line — always visible */}
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 6 }}>
+          <span style={{ fontSize: '13px', fontFamily: 'var(--mono)', color: 'var(--text)', fontWeight: 600 }}>{result.sec.size}</span>
+          <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)' }}>{result.sec.wt} kg/m</span>
         </div>
-        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: 6 }}>
-          {result.sec.grade} · {result.sec.wt} kg/m
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: '10px', fontFamily: 'var(--mono)', marginBottom: 8 }}>
-          <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
-            M <span style={{ color: 'var(--text)' }}>{result.M.toFixed(2)}</span> kNm
-          </div>
-          <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
-            M&#x03C6; <span style={{ color: statusColor }}>{result.MCap.toFixed(2)}</span> kNm
-          </div>
-          <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
-            &#x03B4; <span style={{ color: 'var(--text)' }}>{result.delta.toFixed(1)}</span> mm
-          </div>
-          <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
-            &#x03B4;max <span style={{ color: 'var(--text)' }}>{result.deltaMax.toFixed(1)}</span> mm
-          </div>
+        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: open ? 8 : 0 }}>
+          {result.sec.grade}
         </div>
 
-        {/* Member Form selector */}
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'var(--mono)', display: 'block', marginBottom: 3 }}>
-            Member form
-          </label>
-          <select
-            value={currentForm}
-            onChange={(e) => onFormChange(e.target.value)}
-            style={{
-              width: '100%', padding: '6px 8px', background: 'var(--surface)', border: '1px solid var(--border)',
-              borderRadius: '4px', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '11px', cursor: 'pointer',
-            }}
-          >
-            {availableForms.map((f) => (
-              <option key={f.value} value={f.value}>{f.label}</option>
-            ))}
-          </select>
-        </div>
+        {/* Detail — only when expanded */}
+        {open && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: '10px', fontFamily: 'var(--mono)', marginBottom: 8 }}>
+              <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+                M <span style={{ color: 'var(--text)' }}>{result.M.toFixed(2)}</span> kNm
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+                M&#x03C6; <span style={{ color: statusColor }}>{result.MCap.toFixed(2)}</span> kNm
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+                &#x03B4; <span style={{ color: 'var(--text)' }}>{result.delta.toFixed(1)}</span> mm
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+                &#x03B4;max <span style={{ color: 'var(--text)' }}>{result.deltaMax.toFixed(1)}</span> mm
+              </div>
+            </div>
 
-        {dropdown}
+            {/* Member Form selector */}
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'var(--mono)', display: 'block', marginBottom: 3 }}>
+                Member form
+              </label>
+              <select
+                value={currentForm}
+                onChange={(e) => onFormChange(e.target.value)}
+                style={{
+                  width: '100%', padding: '6px 8px', background: 'var(--surface)', border: '1px solid var(--border)',
+                  borderRadius: '4px', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '11px', cursor: 'pointer',
+                }}
+              >
+                {availableForms.map((f) => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {dropdown}
+          </>
+        )}
       </CardContent>
     </Card>
   );
@@ -1231,24 +1249,6 @@ export default function App() {
                 availableForms={getAvailableForms('fascia')}
                 currentForm={forms.fascia}
               />
-              <MemberCard
-                label="GABLE BOTTOM CHORD"
-                icon="▭"
-                result={calc.selGableChord}
-                dropdown={buildDropdown('gableChord', calc.gableChordResults, calc.selGableChord)}
-                onFormChange={(f) => updateForm('gableChord', f)}
-                availableForms={getAvailableForms('gableChord')}
-                currentForm={forms.gableChord}
-              />
-              <MemberCard
-                label={`GABLE DROPPER · NET h=${calc.netDropperH?.toFixed(3)}m (gross ${calc.dropperHeight.toFixed(3)}m)`}
-                icon="│"
-                result={calc.selGableDropper}
-                dropdown={buildDropdown('gableDropper', calc.gableDropperResults, calc.selGableDropper)}
-                onFormChange={(f) => updateForm('gableDropper', f)}
-                availableForms={getAvailableForms('gableDropper')}
-                currentForm={forms.gableDropper}
-              />
             </div>
 
             {/* ════════════════════════════════════════════════════════
@@ -1291,8 +1291,8 @@ export default function App() {
                   ))}
                 </div>
 
-                {/* Member selectors */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {/* Member selectors — all three gable members live here */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
                   <div>
                     <div style={{ fontSize: '9px', color: '#c9a84c', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
                       Top Chord (Rafter as Truss)
@@ -1319,6 +1319,20 @@ export default function App() {
                       onFormChange={(f) => updateForm('gableChord', f)}
                       availableForms={getAvailableForms('gableChord')}
                       currentForm={forms.gableChord}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '9px', color: '#c9a84c', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                      Dropper (Infill Mullion) · net h={calc.netDropperH?.toFixed(2)}m
+                    </div>
+                    <MemberCard
+                      label="GABLE DROPPER"
+                      icon="│"
+                      result={calc.selGableDropper}
+                      dropdown={buildDropdown('gableDropper', calc.gableDropperResults, calc.selGableDropper)}
+                      onFormChange={(f) => updateForm('gableDropper', f)}
+                      availableForms={getAvailableForms('gableDropper')}
+                      currentForm={forms.gableDropper}
                     />
                   </div>
                 </div>

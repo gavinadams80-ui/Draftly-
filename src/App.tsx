@@ -26,6 +26,7 @@ import { parseHandoff } from '@/lib/handoffSchema';
 import { checkAsDesigned, summarise } from '@/lib/compliance';
 import { normalizeOverlays, getOverlayGuidance, type NormalizedOverlay } from '@/lib/overlays';
 import { generateSitePlanSVG, type LatLng } from '@/lib/sitePlan';
+import { generateSideElevationSVG } from '@/lib/sideElevation';
 import type { ExportSheet } from '@/lib/exportPdf';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -561,43 +562,52 @@ export default function App() {
     });
 
     sheets.push({
-      title: 'Roof Geometry Diagram', number: 'S-002',
+      title: 'Side Elevation — Long Side', number: 'S-002',
+      svg: withTitleBlock(generateSideElevationSVG(
+        config.depth, config.height, config.width, config.pitch,
+        config.roofType === 'gable', config.portalFrameCount, config.attachment,
+      ), titleBlock, 'Side Elevation — Long Side', 'S-002', 1, 1, 'NTS'),
+      description: 'Long-side view along the depth: line of posts, eave and ridge heights, the existing dwelling at the attached end, and ground line. Overall depth and post spacing dimensioned.',
+    });
+
+    sheets.push({
+      title: 'Roof Geometry Diagram', number: 'S-003',
       svg: withTitleBlock(generateRoofGeometrySVG(
         config.width, config.pitch, config.height, config.roofType === 'gable',
         calc.selBeam?.sec.size ?? null, calc.selLedger?.sec.size ?? null, standoff / 1000,
-      ), titleBlock, 'Roof Geometry — Side View', 'S-002', 1, 1, 'NTS'),
+      ), titleBlock, 'Roof Geometry — Cross Section', 'S-003', 1, 1, 'NTS'),
       description: 'Triangular geometry showing span, rise and rafter length. Pitch angles marked; gable apex = half-span × tan(pitch).',
     });
 
     sheets.push({
-      title: 'Section A-A — Portal Frame 1 · Back (House Connection)', number: 'S-003',
+      title: 'Section A-A — Portal Frame 1 · Back (House Connection)', number: 'S-004',
       svg: withTitleBlock(generateWallSectionSVG(
         config.depth * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
         true, calc.selLedger?.sec.d ?? 150, 'back',
-      ), titleBlock, 'Section A-A — PF1 Back (House Connection)', 'S-003', 1, 3, 'NTS'),
+      ), titleBlock, 'Section A-A — PF1 Back (House Connection)', 'S-004', 1, 3, 'NTS'),
     });
 
     sheets.push({
-      title: 'Section A-A — Portal Frame 2 · Intermediate (Middle)', number: 'S-004',
+      title: 'Section A-A — Portal Frame 2 · Intermediate (Middle)', number: 'S-005',
       svg: withTitleBlock(generateWallSectionSVG(
         config.depth * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-      ), titleBlock, 'Section A-A — PF2 Intermediate', 'S-004', 2, 3, 'NTS'),
+      ), titleBlock, 'Section A-A — PF2 Intermediate', 'S-005', 2, 3, 'NTS'),
     });
 
     sheets.push({
-      title: 'Section A-A — Portal Frame 3 · Front (Fascia End)', number: 'S-005',
+      title: 'Section A-A — Portal Frame 3 · Front (Fascia End)', number: 'S-006',
       svg: withTitleBlock(generateWallSectionSVG(
         config.depth * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
         true, calc.selLedger?.sec.d ?? 150, 'front', calc.selPost?.sec.d ?? 100,
-      ), titleBlock, 'Section A-A — PF3 Front (Fascia End)', 'S-005', 3, 3, 'NTS'),
+      ), titleBlock, 'Section A-A — PF3 Front (Fascia End)', 'S-006', 3, 3, 'NTS'),
     });
 
     sheets.push({
-      title: 'Full Detail Elevation — Wall (A-A) · Socket Joint (B-B) · Post (C-C)', number: 'S-006',
-      svg: withTitleBlock(generateFullElevationSVG(), titleBlock, 'Full Detail Elevation', 'S-006', 1, 1, 'NTS'),
+      title: 'Full Detail Elevation — Wall (A-A) · Socket Joint (B-B) · Post (C-C)', number: 'S-007',
+      svg: withTitleBlock(generateFullElevationSVG(), titleBlock, 'Full Detail Elevation', 'S-007', 1, 1, 'NTS'),
       description: 'Three-panel detail elevation per AS1100. Left: dwelling wall at eave with 65×65 SHS standoff. Centre: socket joint — 50×50 stub with packers. Right: corner post base with concrete pad and anchors.',
     });
 

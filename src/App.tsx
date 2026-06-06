@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, Fragment } from 'react';
 import type {
   ProjectConfig, MemberForms, MemberOverrides, MemberForm,
   ConstructionType, BuildingType, RoofType, AttachmentType,
@@ -22,6 +22,8 @@ import { generateCornerPostSVG, generateRafterLedgerSVG, generateCrossBracingSVG
 import { generateSocketJointSVG, generateFasciaPenetrationSVG } from '@/lib/socketJointDrawing';
 import { generateWallSectionSVG } from '@/lib/wallSection';
 import { generateFullElevationSVG } from '@/lib/fullElevation';
+import { parseHandoff } from '@/lib/handoffSchema';
+import { checkAsDesigned, summarise } from '@/lib/compliance';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -194,10 +196,13 @@ interface SiteConstraints {
   zone?: string;
   council?: string;
   maxHeight?: number;   // metres
-  setbacks?: { front?: number; side?: number; rear?: number };
+  setbacks?: { front?: number; side?: number; rear?: number };   // required (planning)
+  offsets?: { front?: number; rear?: number; left?: number; right?: number }; // actual measured
   siteCoverage?: number; // %
+  siteAreaM2?: number;   // lot area from siting tool
   overlays?: string[];
   confidence?: string;
+  importedCompliance?: { approved?: boolean; passCount?: number; totalChecks?: number };
 }
 
 // Map Intelligence projectType strings → Engineering BuildingType enum
@@ -229,63 +234,81 @@ export default function App() {
   const importIntelligenceProject = useCallback((file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
-      try {
-        const payload = JSON.parse(e.target?.result as string);
-        const b = payload.boundaries?.building ?? {};
-        const r = payload.research ?? {};
-        const s = payload.site ?? {};
-
-        // Pre-fill dimensions from building footprint
-        const patch: Partial<ProjectConfig> = {};
-        if (b.width) patch.width = b.width;
-        if (b.depth) patch.depth = b.depth;
-        if (b.height) patch.height = b.height;
-
-        // Map project type
-        const rawType = (s.projectType ?? '').toLowerCase();
-        const mappedType = PROJECT_TYPE_MAP[rawType];
-        if (mappedType) patch.buildingType = mappedType;
-
-        // Attachment type from siting tool
-        const att = payload.boundaries?.attachment;
-        if (att === 'freestanding' || att === 'attached' || att === 'three-side') {
-          patch.attachment = att as AttachmentType;
-        }
-
-        // Pitch and height from siting tool
-        if (b.pitch)        patch.pitch  = b.pitch;
-        if (b.gutterHeight) patch.height = b.gutterHeight;
-
-        // Pre-fill title block with site address
-        if (s.fullAddress) updateTB({ projectName: s.fullAddress, date: new Date().toLocaleDateString('en-AU') });
-
-        if (typeof payload.boundaries?.northBearing === 'number') {
-          setNorthRotation(payload.boundaries.northBearing);
-        }
-
-        setConfig(prev => ({ ...prev, ...patch }));
-        setOverrides({ post: null, beam: null, purlin: null, ledger: null, fascia: null, gableChord: null, gableDropper: null, gableTopChord: null } as MemberOverrides);
-
-        // Store site constraints for display
-        setSiteConstraints({
-          address: s.fullAddress ?? '',
-          zone: r.zone,
-          council: r.council,
-          maxHeight: r.max_height ? parseFloat(r.max_height) : undefined,
-          setbacks: r.setbacks ? {
-            front: parseFloat(r.setbacks.front) || undefined,
-            side: parseFloat(r.setbacks.side) || undefined,
-            rear: parseFloat(r.setbacks.rear) || undefined,
-          } : undefined,
-          siteCoverage: r.site_coverage ? parseFloat(r.site_coverage) : undefined,
-          overlays: r.overlays,
-          confidence: r.confidence,
-        });
-
-        setActiveTab('structure');
-      } catch {
-        alert('Could not read project file — make sure it is a valid Draftly Intelligence export.');
+      const parsed = parseHandoff(e.target?.result as string);
+      if (!parsed.ok || !parsed.data) {
+        alert(parsed.error ?? 'Could not read project file — make sure it is a valid Draftly Intelligence export.');
+        return;
       }
+      const payload = parsed.data;
+      const b = payload.boundaries?.building ?? {};
+      const r = payload.research ?? {};
+      const s = payload.site ?? {};
+      const o = payload.boundaries?.offsets;
+
+      // Pre-fill dimensions from building footprint (validator already coerced to numbers)
+      const patch: Partial<ProjectConfig> = {};
+      if (b.width !== undefined) patch.width = b.width;
+      if (b.depth !== undefined) patch.depth = b.depth;
+      if (b.height !== undefined) patch.height = b.height;
+
+      // Map project type
+      const rawType = (s.projectType ?? '').toLowerCase();
+      const mappedType = PROJECT_TYPE_MAP[rawType];
+      if (mappedType) patch.buildingType = mappedType;
+
+      // Attachment type from siting tool
+      const att = payload.boundaries?.attachment;
+      if (att === 'freestanding' || att === 'attached' || att === 'three-side') {
+        patch.attachment = att as AttachmentType;
+      }
+
+      // Pitch and eave height from siting tool
+      if (b.pitch !== undefined)        patch.pitch  = b.pitch;
+      if (b.gutterHeight !== undefined) patch.height = b.gutterHeight;
+
+      // Drive plan-drawing wall setbacks from the ACTUAL measured offsets (left/right
+      // are the side flanks). Previously these were ignored and hand-typed.
+      if (o?.left  !== undefined) setLeftSetback(o.left);
+      if (o?.right !== undefined) setRightSetback(o.right);
+
+      // Pre-fill title block with site address + council
+      if (s.fullAddress || r.council) {
+        updateTB({
+          projectName: s.fullAddress ?? '',
+          propertyAddress: s.fullAddress ?? '',
+          council: r.council ?? '',
+          date: new Date().toLocaleDateString('en-AU'),
+        });
+      }
+
+      if (typeof payload.boundaries?.northBearing === 'number') {
+        setNorthRotation(payload.boundaries.northBearing);
+      }
+
+      setConfig(prev => ({ ...prev, ...patch }));
+      setOverrides({ post: null, beam: null, purlin: null, ledger: null, fascia: null, gableChord: null, gableDropper: null, gableTopChord: null } as MemberOverrides);
+
+      // Store site constraints — including the offsets and Intelligence's own
+      // compliance verdict, which are carried through (no longer dropped).
+      setSiteConstraints({
+        address: s.fullAddress ?? '',
+        zone: r.zone,
+        council: r.council,
+        maxHeight: r.max_height,
+        setbacks: r.setbacks ? { front: r.setbacks.front, side: r.setbacks.side, rear: r.setbacks.rear } : undefined,
+        offsets: o ? { front: o.front, rear: o.rear, left: o.left, right: o.right } : undefined,
+        siteCoverage: r.site_coverage,
+        siteAreaM2: payload.boundaries?.site?.areaM2 ?? undefined,
+        overlays: r.overlays,
+        confidence: r.confidence,
+        importedCompliance: payload.compliance ? {
+          approved: payload.compliance.approved,
+          passCount: payload.compliance.passCount,
+          totalChecks: payload.compliance.totalChecks,
+        } : undefined,
+      });
+
+      setActiveTab('structure');
     };
     reader.readAsText(file);
   }, [updateTB]);
@@ -305,6 +328,29 @@ export default function App() {
   const resetOverrides = useCallback(() => {
     setOverrides(DEFAULT_OVERRIDES);
   }, []);
+
+  // ── As-designed compliance re-check against carried-through site constraints ──
+  const compliance = useMemo(() => {
+    if (!siteConstraints) return null;
+    // As-designed ridge height: eave height + roof rise over the clear span.
+    const actualSpan = Math.max(0.5, config.width - 2 * (standoff / 1000));
+    const isGable = config.roofType === 'gable';
+    const rise = (isGable ? actualSpan / 2 : actualSpan) * Math.tan(config.pitch * Math.PI / 180);
+    const designedRidge = config.height + rise;
+    const footprintM2 = config.width * config.depth;
+
+    const checks = checkAsDesigned({
+      maxHeight: siteConstraints.maxHeight,
+      designedRidge,
+      requiredSetbacks: siteConstraints.setbacks,
+      actualOffsets: siteConstraints.offsets,
+      siteCoverage: siteConstraints.siteCoverage,
+      footprintM2,
+      siteAreaM2: siteConstraints.siteAreaM2,
+    });
+    if (!checks.length) return null;
+    return summarise(checks);
+  }, [siteConstraints, config.width, config.depth, config.height, config.pitch, config.roofType, standoff]);
 
   // ── Engineering calculations ──
   const calc = useMemo(() => {
@@ -574,6 +620,61 @@ export default function App() {
               style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: '2px 4px' }}
               title="Dismiss"
             >×</button>
+          </div>
+        )}
+
+        {/* ── AS-DESIGNED COMPLIANCE PANEL ── */}
+        {compliance && (
+          <div style={{
+            background: 'var(--surface)', border: `1px solid ${compliance.failCount > 0 ? 'rgba(224,108,108,0.45)' : 'rgba(109,184,122,0.4)'}`,
+            borderRadius: '8px', padding: '12px 14px', marginBottom: '16px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--accent)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                As-Designed Compliance
+              </span>
+              <span style={{
+                fontSize: '11px', fontFamily: 'var(--mono)', fontWeight: 700, padding: '2px 8px', borderRadius: '4px',
+                color: compliance.failCount > 0 ? '#e06c6c' : '#6db87a',
+                background: compliance.failCount > 0 ? 'rgba(224,108,108,0.12)' : 'rgba(109,184,122,0.12)',
+              }}>
+                {compliance.failCount > 0
+                  ? `${compliance.failCount} FAIL`
+                  : `${compliance.passCount}/${compliance.assessable} PASS`}
+              </span>
+              {compliance.unknownCount > 0 && (
+                <Chip label={`${compliance.unknownCount} need data`} />
+              )}
+              {siteConstraints?.importedCompliance && (
+                <span style={{ fontSize: '9px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                  Intelligence: {siteConstraints.importedCompliance.approved ? '✅ approved' : '❌ issues'}
+                  {siteConstraints.importedCompliance.passCount !== undefined &&
+                    ` (${siteConstraints.importedCompliance.passCount}/${siteConstraints.importedCompliance.totalChecks})`}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px,1fr) 1fr 1fr 56px', gap: '4px 12px', fontSize: '11px', fontFamily: 'var(--mono)' }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Check</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Required</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>As designed</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: 'right' }}>Result</div>
+              {compliance.checks.map((c) => {
+                const col = c.pass === false ? '#e06c6c' : c.pass === true ? '#6db87a' : 'var(--text-muted)';
+                return (
+                  <Fragment key={c.label}>
+                    <div style={{ color: 'var(--text)' }}>{c.label}</div>
+                    <div style={{ color: 'var(--text-muted)' }}>{c.required}</div>
+                    <div style={{ color: 'var(--text)' }}>{c.actual}</div>
+                    <div style={{ color: col, textAlign: 'right', fontWeight: 700 }}>
+                      {c.pass === false ? '✗ FAIL' : c.pass === true ? '✓ PASS' : '—'}
+                    </div>
+                  </Fragment>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 8 }}>
+              Re-checked against the as-engineered structure (ridge from pitch + span). Setbacks are the measured offsets from Site Intelligence.
+            </div>
           </div>
         )}
 

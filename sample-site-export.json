@@ -1,0 +1,46 @@
+{
+  "site": {
+    "street": "31 Ambiance Crescent",
+    "suburb": "Narre Warren South",
+    "state": "VIC",
+    "postcode": "3805",
+    "fullAddress": "31 Ambiance Crescent, Narre Warren South, VIC, 3805",
+    "projectType": "pergola"
+  },
+  "research": {
+    "council": "City of Casey",
+    "zone": "GRZ1",
+    "zone_name": "General Residential Zone",
+    "max_height": "3.6",
+    "site_coverage": "60",
+    "setbacks": { "front": "6", "side": "1.0", "rear": "3" },
+    "overlays": ["Bushfire Management Overlay"],
+    "confidence": "high"
+  },
+  "boundaries": {
+    "site": { "areaM2": 630, "lotPts": [] },
+    "building": {
+      "width": 9.27,
+      "depth": 5.77,
+      "gutterHeight": 2.7,
+      "fasciaHeight": 2.8,
+      "pitch": 10,
+      "ridgeHeight": 3.49,
+      "height": 3.49
+    },
+    "attachment": "three-side",
+    "northBearing": 12,
+    "offsets": { "front": 6.5, "rear": 4.0, "left": 0.9, "right": 1.5 },
+    "ridgeBearing": 92,
+    "ridgeLength": 5.77
+  },
+  "compliance": {
+    "approved": true,
+    "passCount": 5,
+    "totalChecks": 5,
+    "checkedAt": "2026-06-06T00:00:00.000Z",
+    "approvedAt": "2026-06-06T00:00:00.000Z"
+  },
+  "status": "compliance_approved",
+  "version": "1.0.0"
+}

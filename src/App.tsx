@@ -9,7 +9,7 @@ import {
 } from '@/lib/sections';
 import {
   calcUtilisation, calcUtilisationCustom, classifySectionForm,
-  formsAvailableIn, lightestPassingForm, getBracingFactor,
+  formsAvailableIn, lightestPassingForm, getBracingFactor, bracingAdvice,
   BUILDING_TYPES, MATERIAL_LABELS, STANDARDS,
   ROOFING_PROFILES, getRoofingProfile,
   CLADDING_TYPES, calcGableInfill,
@@ -794,6 +794,14 @@ export default function App() {
   const formsBeam = formsAvailableIn(beamPoolUI);
   const formsPurlin = formsAvailableIn(sectionsDB.rafters);
 
+  // Material- and openness-aware bracing recommendation (shed practice)
+  const brAdvice = bracingAdvice({
+    material: config.constructionType,
+    buildingType: config.buildingType,
+    span: Math.max(0.5, config.width - 2 * (standoff / 1000)),
+    windKpa: config.windPressureKpa,
+  });
+
   // Check for all-fail condition
   const allFail = calc.postResults.length && !calc.selPost?.passed &&
                   calc.beamResults.length && !calc.selBeam?.passed &&
@@ -1415,6 +1423,23 @@ export default function App() {
                   : config.bracing === 'knee-brace' ? <><strong style={{ color: 'var(--text)' }}>Knee brace —</strong> diagonal struts at the knees stiffen the frame, roughly halving the drift and knee moment versus a bare moment frame.</>
                   : config.bracing === 'diaphragm' ? <><strong style={{ color: 'var(--text)' }}>Diaphragm —</strong> roof/wall sheeting acts as a shear diaphragm carrying lateral load to the supports; negligible frame sway (verify sheet / fastener shear).</>
                   : <><strong style={{ color: 'var(--text)' }}>Tie to wall —</strong> the attached dwelling wall restrains the structure laterally; negligible sway in that direction (verify the tie connection).</>}
+              </div>
+
+              {/* Material/openness-aware recommendation */}
+              <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 6, background: 'rgba(38,166,154,0.08)', border: '1px solid rgba(38,166,154,0.3)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '9px', color: '#26a69a', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>Recommended</span>
+                  <span style={{ fontSize: '11px', color: 'var(--text)', fontFamily: 'var(--mono)', fontWeight: 700 }}>
+                    {({ 'moment-frame': 'Moment frame', 'cross-brace': 'Cross brace', 'knee-brace': 'Knee brace', 'diaphragm': 'Diaphragm', 'tied-to-wall': 'Tie to wall' } as const)[brAdvice.recommended]}
+                  </span>
+                  {config.bracing !== brAdvice.recommended && (
+                    <button onClick={() => updateConfig({ bracing: brAdvice.recommended })}
+                      style={{ fontSize: '10px', fontFamily: 'var(--mono)', padding: '3px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid #26a69a', background: 'transparent', color: '#26a69a' }}>Use</button>
+                  )}
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 6 }}>{brAdvice.rationale}</div>
+                {brAdvice.flyBrace && <div style={{ fontSize: '9px', color: '#c9a84c', lineHeight: 1.5, marginTop: 6, fontFamily: 'var(--mono)' }}>⚑ Fly bracing — {brAdvice.flyBrace}</div>}
+                {brAdvice.longitudinal && <div style={{ fontSize: '9px', color: '#ff9800', lineHeight: 1.5, marginTop: 6, fontFamily: 'var(--mono)' }}>↔ Longitudinal — {brAdvice.longitudinal}</div>}
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px,1fr))', gap: 8, marginTop: 12 }}>

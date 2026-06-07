@@ -5,9 +5,6 @@ import type {
   UtilResult,
 } from '@/types';
 import {
-  getSectionDB,
-} from '@/lib/sections';
-import {
   calcUtilisation, calcUtilisationCustom, classifySectionForm,
   formsAvailableIn, lightestPassingForm, getBracingFactor, bracingAdvice,
   BUILDING_TYPES, MATERIAL_LABELS, STANDARDS,
@@ -19,6 +16,7 @@ import {
 import { calcPortalFrame, calcPortalLateral, type PortalFrameResult, type PortalLateralResult } from '@/lib/portalFrame';
 // ── Shared drawing library (single source of truth, both apps consume it) ──
 import {
+  getSectionDB,
   generateThreeViewSVG, generateGableInfillSVG,
   generateBuildingPlanSVG, generateRoofGeometrySVG,
   withTitleBlock, DEFAULT_TITLE_BLOCK, type TitleBlockData,

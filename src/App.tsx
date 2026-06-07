@@ -558,7 +558,9 @@ export default function App() {
     // a braced bay (cross-brace / diaphragm / tie-to-wall) takes it as axial with
     // little sway. Knee braces stiffen the moment frame (≈ half the drift).
     const riseM = (actualSpan / 2) * Math.tan((config.pitch * Math.PI) / 180);
-    const H_wind = config.windPressureKpa * frameSpacing * (config.height + riseM / 2); // kN at eaves
+    // Attachment restrains lateral demand: the dwelling carries a share of the wind
+    // (three-side ≈ ×0.35, attached ≈ ×0.55, freestanding ×1.0 — same factor as span bracing).
+    const H_wind = config.windPressureKpa * frameSpacing * (config.height + riseM / 2) * bracingFactor; // kN at eaves
     const driftLimitMm = (config.height * 1000) / 150; // h/150 sway limit
     const aM2 = (s: { wt: number }) => Math.max(1e-4, (s.wt || 5) / 7850);
     const colSec = selPost?.sec;
@@ -612,7 +614,7 @@ export default function App() {
     // Wind on the gable end wall is carried back through the roof plane to braced
     // end bays. Size a diagonal end-bay tension brace (frame spacing × eave height).
     const endWallArea = actualSpan * (config.height + riseM / 2); // m²
-    const H_long = config.windPressureKpa * endWallArea;          // kN total longitudinal
+    const H_long = config.windPressureKpa * endWallArea * bracingFactor; // kN total longitudinal
     const thetaLong = Math.atan2(config.height, frameSpacing);
     const longBraceForceKN = H_long / Math.cos(thetaLong);
     const longCand = sections.rafters
@@ -775,7 +777,7 @@ export default function App() {
       svg: withTitleBlock(generateWallSectionSVG(
         config.depth * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        true, calc.selLedger?.sec.d ?? 150, 'back', 100, config.roofType === 'gable',
+        true, calc.selGableChord?.sec.d ?? 150, 'back', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
       ), titleBlock, 'Section A-A — PF1 Back (House Connection)', 'S-004', 1, 3, 'NTS'),
     });
 
@@ -784,7 +786,7 @@ export default function App() {
       svg: withTitleBlock(generateWallSectionSVG(
         config.depth * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        false, 150, 'intermediate', 100, config.roofType === 'gable',
+        false, 150, 'intermediate', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
       ), titleBlock, 'Section A-A — PF2 Intermediate', 'S-005', 2, 3, 'NTS'),
     });
 
@@ -793,7 +795,7 @@ export default function App() {
       svg: withTitleBlock(generateWallSectionSVG(
         config.depth * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        true, calc.selLedger?.sec.d ?? 150, 'front', calc.selPost?.sec.d ?? 100, config.roofType === 'gable',
+        true, calc.selGableChord?.sec.d ?? 150, 'front', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
       ), titleBlock, 'Section A-A — PF3 Front (Fascia End)', 'S-006', 3, 3, 'NTS'),
     });
 
@@ -892,6 +894,7 @@ export default function App() {
   const brAdvice = bracingAdvice({
     material: config.constructionType,
     buildingType: config.buildingType,
+    attachment: config.attachment,
     span: Math.max(0.5, config.width - 2 * (standoff / 1000)),
     windKpa: config.windPressureKpa,
   });

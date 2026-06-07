@@ -290,3 +290,82 @@ export function calcPortalFrame(inp: PortalFrameInput): PortalFrameResult {
     nodeDisp: disp,
   };
 }
+
+export interface PortalLateralResult {
+  H_lateral: number;   // kN — total horizontal load applied at the eaves
+  swayMm: number;      // mm — horizontal drift at the eaves
+  M_kneeLat: number;   // kNm — knee moment from sway (max of the two knees)
+  M_columnLat: number; // kNm — max column moment from sway (knee or base)
+  M_baseLat: number;   // kNm — base moment (0 for pinned)
+  baseShear: number;   // kN — horizontal reaction summed at the two bases
+}
+
+/**
+ * Lateral (wind/notional) analysis of the same pitched portal: a horizontal
+ * load H applied at the windward eaves makes the frame SWAY. Returns the drift
+ * and the sway-induced knee/column/base moments — the actions the gravity-only
+ * model misses. Pure horizontal nodal load (no member UDL → no fixed-end forces).
+ */
+export function calcPortalLateral(inp: PortalFrameInput, H_lateral: number): PortalLateralResult {
+  const { span: L, eaveHeight: h, pitchDeg, baseFixity } = inp;
+  const pitch = (pitchDeg * Math.PI) / 180;
+  const rise = (L / 2) * Math.tan(pitch);
+
+  const colEI = inp.column.E * 1000 * inp.column.I * 1e-12;
+  const rafEI = inp.rafter.E * 1000 * inp.rafter.I * 1e-12;
+  const colEA = inp.column.E * 1000 * inp.column.A;
+  const rafEA = inp.rafter.E * 1000 * inp.rafter.A;
+
+  const nodes = [[0, 0], [0, h], [L / 2, h + rise], [L, h], [L, 0]];
+  const elems: [number, number, number, number][] = [
+    [0, 1, colEA, colEI],
+    [1, 2, rafEA, rafEI],
+    [2, 3, rafEA, rafEI],
+    [3, 4, colEA, colEI],
+  ];
+
+  const nDof = nodes.length * 3;
+  const K = Array.from({ length: nDof }, () => new Array(nDof).fill(0));
+  const F = new Array(nDof).fill(0);
+  const elemData: { dofs: number[]; kl: number[][]; T: number[][] }[] = [];
+
+  for (const [ni, nj, EA, EI] of elems) {
+    const dx = nodes[nj][0] - nodes[ni][0], dy = nodes[nj][1] - nodes[ni][1];
+    const Lm = Math.hypot(dx, dy);
+    const c = dx / Lm, s = dy / Lm;
+    const kl = localK(EA, EI, Lm);
+    const T = transform(c, s);
+    const kg = matMul(matMul(matT(T), kl), T);
+    const dofs = [ni * 3, ni * 3 + 1, ni * 3 + 2, nj * 3, nj * 3 + 1, nj * 3 + 2];
+    for (let a = 0; a < 6; a++) for (let b = 0; b < 6; b++) K[dofs[a]][dofs[b]] += kg[a][b];
+    elemData.push({ dofs, kl, T });
+  }
+
+  // Horizontal load at the windward eaves (node N1, u-DOF = index 3)
+  F[3] += H_lateral;
+
+  const constrained: number[] = [0, 1, 12, 13];
+  if (baseFixity === 'fixed') constrained.push(2, 14);
+  let kmax = 0;
+  for (let i = 0; i < nDof; i++) kmax = Math.max(kmax, Math.abs(K[i][i]));
+  const PEN = kmax * 1e8;
+  for (const d of constrained) { K[d][d] += PEN; F[d] = 0; }
+
+  const disp = solveLinear(K, F);
+
+  // Sway = horizontal drift at the eaves (average of the two eaves nodes)
+  const swayMm = ((disp[3] + disp[9]) / 2) * 1000;
+
+  // Element end moments (no FEF term for a nodal-load-only case)
+  const Mend = elemData.map(({ dofs, kl, T }) => {
+    const dl = matVec(T, dofs.map((d) => disp[d]));
+    const fl = matVec(kl, dl);
+    return { Mi: fl[2], Mj: fl[5] };
+  });
+  // Knees: top of each column (E0 Mj, E3 Mi)
+  const M_kneeLat = Math.max(Math.abs(Mend[0].Mj), Math.abs(Mend[3].Mi));
+  const M_baseLat = baseFixity === 'fixed' ? Math.max(Math.abs(Mend[0].Mi), Math.abs(Mend[3].Mj)) : 0;
+  const M_columnLat = Math.max(M_kneeLat, M_baseLat);
+
+  return { H_lateral, swayMm: Math.abs(swayMm), M_kneeLat, M_columnLat, M_baseLat, baseShear: Math.abs(H_lateral) };
+}

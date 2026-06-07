@@ -1,7 +1,7 @@
 // ── Engineering Calculation Engine ──
 // AS/NZS 4600 (cold-formed), AS4100 (steel), AS1720 (timber), AS1664 (aluminium)
 
-import type { Section, UtilResult, MemberForm } from '@/types';
+import type { Section, UtilResult, MemberForm, BracingType } from '@/types';
 
 // ── Load constants ──
 export const LOAD_KPA_ULTIMATE = 0.74;    // kN/m² (1.2G + 1.5Q)
@@ -313,6 +313,50 @@ export function findSectionBySize(sectionList: Section[], size: string | null): 
 // ── Lightest passing result ──
 export function lightestPassing(results: UtilResult[]): UtilResult | null {
   return results.find((r) => r.passed) || (results.length ? results[0] : null);
+}
+
+// ── Bracing advisory ──
+// Material- and openness-aware guidance for how a shed-type structure should be
+// braced (AS practice): C-section frames are flexible and need more bracing
+// (cross + knee/apex + fly bracing); RHS frames are stiff and can rely on rigid
+// portal action with limited end-bay bracing. Open-front structures lose the
+// front-wall diaphragm so longitudinal load must be carried by wall/roof bracing.
+const OPEN_FRONT_TYPES = ['carport', 'pergola', 'patio', 'verandah', 'deck'];
+export function bracingAdvice(opts: {
+  material: string;
+  buildingType: string;
+  span: number;       // m
+  windKpa: number;
+}): { recommended: BracingType; rationale: string; flyBrace: string | null; longitudinal: string | null } {
+  const isRHS = opts.material === 'steel';
+  const openFront = OPEN_FRONT_TYPES.includes(opts.buildingType);
+  const bigSpan = opts.span > 7;
+  const highWind = opts.windKpa >= 1.0;
+
+  let recommended: BracingType;
+  let rationale: string;
+  if (isRHS) {
+    recommended = 'moment-frame';
+    rationale = `RHS frames are stiff and strong — rely on rigid portal (moment) action${
+      openFront ? ', plus limited rod cross-bracing in the rear/side end bays and roof plane to keep the front clear'
+                : ', with light end-bay rod bracing'
+    }.`;
+  } else {
+    recommended = openFront ? 'cross-brace' : bigSpan ? 'knee-brace' : 'cross-brace';
+    rationale = `C-section frames are lighter and more flexible — bare moment-frame sway is usually too large. Combine ${
+      openFront ? 'cross-bracing in the side/rear end bays + roof-plane bracing' : 'end-bay cross-bracing'
+    }${bigSpan ? ' and knee/apex braces at the portals' : ''}${highWind ? '; heavier layout for the high wind pressure' : ''}.`;
+  }
+
+  const flyBrace = !isRHS
+    ? `Provide fly bracing from the C-section column/rafter flanges to the purlins/girts at ≤ ${bigSpan ? '1.5' : '2.5'} m centres to restrain flange (lateral-torsional) buckling — the 0.65 LTB factor assumes this restraint is present.`
+    : null;
+
+  const longitudinal = openFront
+    ? `Open-front: the missing front wall removes diaphragm action along the building. Carry longitudinal wind with diagonal cross-bracing in the side/rear walls + roof-plane bracing between frames, or make one or more bays a full moment frame.`
+    : null;
+
+  return { recommended, rationale, flyBrace, longitudinal };
 }
 
 // ── Bracing factor from attachment ──

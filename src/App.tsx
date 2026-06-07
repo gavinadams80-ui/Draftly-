@@ -808,17 +808,31 @@ export default function App() {
       description: 'Three-panel detail elevation per AS1100. Left: dwelling wall at eave with 65×65 SHS standoff. Centre: socket joint — 50×50 stub with packers. Right: corner post base with concrete pad and anchors.',
     });
 
+    if (config.roofType === 'gable') {
+      const aSpanG = Math.max(0.5, config.width - 2 * (standoff / 1000));
+      const ghG = (aSpanG / 2) * Math.tan((config.pitch * Math.PI) / 180);
+      const gi = calcGableInfill(aSpanG, ghG, config.pitch, selectedCladding, 0.5, calc.selBeam?.sec.d ?? 0, calc.selGableChord?.sec.d ?? 0);
+      sheets.push({
+        title: 'Gable End Elevation — Infill & Droppers', number: 'S-008',
+        svg: withTitleBlock(generateGableInfillSVG(
+          gi.gableWidth, gi.gableHeight, gi.nBays, gi.dropperSpacing, gi.cladding.name, gi.panelWidth,
+          calc.selBeam?.sec.size ?? '', calc.selGableChord?.sec.size ?? '', calc.selGableDropper?.sec.size ?? '',
+        ), titleBlock, 'Gable End Elevation', 'S-008', 1, 1, 'NTS'),
+        description: 'Gable end frame seen square-on: rafters and bottom chord with the infill droppers at the calculated spacing, labelled with the selected member sections.',
+      });
+    }
+
     sheets.push({
-      title: 'Bill of Materials — Steel Take-off', number: 'S-008',
+      title: 'Bill of Materials — Steel Take-off', number: 'S-009',
       svg: withTitleBlock(
         generateBomSVG(materialSchedule.lines, materialSchedule.totalKg, materialSchedule.totalCost, ratePerKg),
-        titleBlock, 'Bill of Materials', 'S-008', 1, 1, 'NTS',
+        titleBlock, 'Bill of Materials', 'S-009', 1, 1, 'NTS',
       ),
       description: 'Indicative steel take-off and cost estimate from the frame geometry and selected sections, including lateral / longitudinal bracing. Excludes connections, fixings, footings, sheeting and labour.',
     });
 
     return sheets;
-  }, [config, standoff, leftSetback, rightSetback, calc, northRotation, titleBlock, siteConstraints, materialSchedule, ratePerKg]);
+  }, [config, standoff, leftSetback, rightSetback, calc, northRotation, titleBlock, siteConstraints, materialSchedule, ratePerKg, selectedCladding]);
 
   const handleExportPDF = useCallback(async () => {
     setIsExporting(true);

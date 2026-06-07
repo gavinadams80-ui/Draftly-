@@ -451,6 +451,9 @@ export function generateGableInfillSVG(
   dropperSpacing: number,
   claddingName: string,
   panelWidth: number,
+  rafterSize = '',   // selected gable rafter / top chord
+  chordSize = '',    // selected gable bottom chord
+  dropperSize = '',  // selected gable dropper
 ): string {
   const W = 480;
   const H = 220;
@@ -525,6 +528,18 @@ export function generateGableInfillSVG(
   // Rafters (heavy lines)
   svg += `<line x1="${leftX}" y1="${baseY}" x2="${apexX}" y2="${apexY}" stroke="${frameCol}" stroke-width="2"/>`;
   svg += `<line x1="${rightX}" y1="${baseY}" x2="${apexX}" y2="${apexY}" stroke="${frameCol}" stroke-width="2"/>`;
+
+  // ── Member-size callouts (from engineering) ──
+  if (rafterSize) {
+    svg += `<text x="${(leftX + apexX) / 2 - 6}" y="${(baseY + apexY) / 2 - 6}" text-anchor="end" font-family="${mono}" font-size="7.5" fill="${frameCol}" font-weight="600">RAFTER ${rafterSize}</text>`;
+  }
+  if (chordSize) {
+    svg += `<text x="${apexX}" y="${baseY - 5}" text-anchor="middle" font-family="${mono}" font-size="7.5" fill="${frameCol}" font-weight="600">BOTTOM CHORD ${chordSize}</text>`;
+  }
+  if (dropperSize) {
+    // label the dropper nearest the apex
+    svg += `<text x="${apexX + 6}" y="${(baseY + apexY) / 2}" text-anchor="start" font-family="${mono}" font-size="7.5" fill="${dropperCol}" font-weight="600">DROPPERS ${dropperSize}</text>`;
+  }
 
   // Gable height dimension (left side)
   const dimX = leftX - 10;

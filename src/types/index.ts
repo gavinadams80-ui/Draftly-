@@ -55,6 +55,16 @@ export type RoofType = 'flat' | 'gable' | 'hip' | 'skillion' | 'open';
 
 export type AttachmentType = 'freestanding' | 'attached' | 'three-side';
 
+// Intermediate-frame structural type:
+//  'tied-rafter' — rafters tied at the bottom by a chord (truss). The tie takes
+//                  the horizontal thrust; rafters act as top chords, columns axial.
+//  'portal'      — rigid moment frame, no bottom chord. Knee moments develop,
+//                  columns carry moment, the base develops horizontal thrust.
+export type IntermediateFrameType = 'tied-rafter' | 'portal';
+
+// Base fixity for portal-frame analysis.
+export type BaseFixity = 'pinned' | 'fixed';
+
 export interface MemberForms {
   post: MemberForm;
   beam: MemberForm;
@@ -87,6 +97,9 @@ export interface ProjectConfig {
   height: number;      // m
   pitch: number;       // degrees
   portalFrameCount: number;
+  // Intermediate frames: simple tied rafter (truss) vs untied portal moment frame.
+  intermediateFrame: IntermediateFrameType;
+  baseFixity: BaseFixity;   // only used when intermediateFrame === 'portal'
 }
 
 export interface RoofingProfile {

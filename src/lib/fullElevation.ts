@@ -28,6 +28,13 @@ const C_BOLTS = '#f44336';
 // Line weights per AS1100
 const T = 1.2, M = 0.6, F = 0.3;
 
+// Pull depth/width (mm) out of a section designation, e.g. "C250 × 65 × 2.4"
+// or "RHS 150 × 100 × 3.0" → { d:250|150, b:65|100, t:2.4|3.0 }.
+function dimsFromSize(size: string, dDef: number, bDef: number, tDef = 2.4) {
+  const nums = (size.match(/[\d.]+/g) || []).map(Number);
+  return { d: nums[0] || dDef, b: nums[1] || bDef, t: nums[2] || tDef };
+}
+
 // Custom wide frame for three-panel layout (A2-ish landscape)
 const WFRAME_W = 900;
 const WFRAME_H = 480;
@@ -231,10 +238,11 @@ function drawWallSection(px: number, py: number, pw: number, ph: number): string
 }
 
 // ── Panel 2: Socket Joint Detail (CENTRE) ──
-function drawSocketJoint(px: number, py: number, pw: number, ph: number): string {
+function drawSocketJoint(px: number, py: number, pw: number, ph: number, rafterSize: string): string {
   let s = '';
   const sc = 0.5;
   const cx = px + pw / 2;
+  const rDims = dimsFromSize(rafterSize, 250, 65);
 
   // Ground line
   const gy = py + ph - 20;
@@ -273,10 +281,10 @@ function drawSocketJoint(px: number, py: number, pw: number, ph: number): string
   // Rear packer
   s += `<rect x="${stubX - pkW / 2}" y="${stubY}" width="${pkW}" height="${pkH}" fill="rgba(255,152,0,0.2)" stroke="#ff9800" stroke-width="${M}"/>`;
 
-  // C250×65 rafter (slips over the stub)
-  const cd = 250 * sc; // rafter depth
-  const cb = 65 * sc;  // rafter width
-  const ct = 2.4 * sc; // thickness (not to scale for clarity)
+  // Rafter (slips over the stub) — depth/width from the selected section
+  const cd = rDims.d * sc; // rafter depth
+  const cb = rDims.b * sc;  // rafter width
+  const ct = rDims.t * sc; // thickness (not to scale for clarity)
   const rax = stubX - cd / 2;
   const ray = stubY - stubS - pkH - 5 * sc; // sits on packers
   // Draw rafter as open C-section (front view = rectangle with hidden lines)
@@ -305,14 +313,14 @@ function drawSocketJoint(px: number, py: number, pw: number, ph: number): string
   // Callouts
   s += callout(cx + shsS / 2 + 10, shy1 + 30, '65×65 SHS CONTINUOUS', cx + shsS / 2, shy1 + 30);
   s += callout(cx + stubLen / 2 + 8, stubY - stubS / 2, '50×50 SHS STUB', cx + stubLen / 2, stubY - stubS / 2);
-  s += callout(rax + cd + 5, ray + cb / 2, 'C250×65×2.4 RAFTER', rax + cd, ray + cb / 2);
+  s += callout(rax + cd + 5, ray + cb / 2, `${rafterSize} RAFTER`, rax + cd, ray + cb / 2);
 
   // Packer callout
   s += callout(cx + pkW / 2 + 15, stubY - stubS - pkH / 2, '50×5 PACKER', cx + pkW / 2, stubY - stubS - pkH / 2);
 
   // Dimensions
   s += dimV(shx + shsS + 8, shy1, shx + shsS + 8, shy2, 'HEIGHT', 25);
-  s += dimH(rax, ray - lip - 8, rax + cd, ray - lip - 8, '250', 6);
+  s += dimH(rax, ray - lip - 8, rax + cd, ray - lip - 8, `${rDims.d}`, 6);
 
   // Panel label
   s += `<rect x="${px}" y="${py}" width="60" height="16" fill="rgba(33,150,243,0.15)" stroke="${C_SHS}" stroke-width="0.5" rx="2"/>`;
@@ -322,10 +330,11 @@ function drawSocketJoint(px: number, py: number, pw: number, ph: number): string
 }
 
 // ── Panel 3: Corner Post Detail (RIGHT) ──
-function drawCornerPost(px: number, py: number, pw: number, ph: number): string {
+function drawCornerPost(px: number, py: number, pw: number, ph: number, postSize: string): string {
   let s = '';
   const sc = 0.5;
   const cx = px + pw / 2;
+  const pDims = dimsFromSize(postSize, 100, 50);
 
   // Ground
   const gy = py + ph - 20;
@@ -346,9 +355,9 @@ function drawCornerPost(px: number, py: number, pw: number, ph: number): string 
   s += `<rect x="${cx - bpW / 2}" y="${bpY}" width="${bpW}" height="${bpH}" fill="rgba(201,168,76,0.3)" stroke="${C_PLATE}" stroke-width="${T}"/>`;
   s += callout(cx + bpW / 2 + 10, bpY + bpH / 2, '150×150×8 BASE PLATE', cx + bpW / 2, bpY + bpH / 2);
 
-  // Post (C100×50 or similar)
-  const postD = 100 * sc;
-  const postB = 50 * sc;
+  // Post — depth/width from the selected section
+  const postD = pDims.d * sc;
+  const postB = pDims.b * sc;
   const postY = bpY - postD;
   s += `<rect x="${cx - postB / 2}" y="${postY}" width="${postB}" height="${postD}" fill="${C_CSECTION_FILL}" stroke="${C_CSECTION}" stroke-width="${T}"/>`;
   // Web (hidden)
@@ -360,7 +369,7 @@ function drawCornerPost(px: number, py: number, pw: number, ph: number): string 
   s += `<line x1="${cx - postB / 2}" y1="${bpY}" x2="${cx - postB / 2 - lip}" y2="${bpY}" stroke="${C_CSECTION}" stroke-width="${M}"/>`;
   s += `<line x1="${cx + postB / 2}" y1="${bpY}" x2="${cx + postB / 2 + lip}" y2="${bpY}" stroke="${C_CSECTION}" stroke-width="${M}"/>`;
 
-  s += callout(cx + postB / 2 + 15, postY + postD / 2, 'C100×50×1.6 POST', cx + postB / 2, postY + postD / 2);
+  s += callout(cx + postB / 2 + 15, postY + postD / 2, `${postSize} POST`, cx + postB / 2, postY + postD / 2);
 
   // M16 anchor bolts (4)
   for (let i = 0; i < 2; i++) {
@@ -397,7 +406,10 @@ function drawCornerPost(px: number, py: number, pw: number, ph: number): string 
 }
 
 // ── Main function ──
-export function generateFullElevationSVG(): string {
+export function generateFullElevationSVG(
+  rafterSize = 'C250 × 65 × 2.4',
+  postSize = 'C100 × 50 × 1.6',
+): string {
   const info: DrawingInfo = {
     title: 'DETAIL ELEVATION — ATTACHED GABLE STRUCTURE',
     drawingNo: 'DRF-002-ELEV-01',
@@ -430,10 +442,10 @@ export function generateFullElevationSVG(): string {
   svg += drawWallSection(wx, panelY, panelW, panelH);
 
   // Panel 2: Socket Joint (centre)
-  svg += drawSocketJoint(wx + panelW + gap, panelY, panelW, panelH);
+  svg += drawSocketJoint(wx + panelW + gap, panelY, panelW, panelH, rafterSize);
 
   // Panel 3: Corner Post (right)
-  svg += drawCornerPost(wx + panelW * 2 + gap * 2, panelY, panelW, panelH);
+  svg += drawCornerPost(wx + panelW * 2 + gap * 2, panelY, panelW, panelH, postSize);
 
   // Section reference table at bottom
   const tx = wx;
@@ -442,8 +454,8 @@ export function generateFullElevationSVG(): string {
   svg += `<rect x="${tx}" y="${ty}" width="420" height="${refH}" fill="rgba(0,0,0,0.25)" stroke="${C_DIM}" stroke-width="0.3" rx="2"/>`;
   svg += `<text x="${tx + 8}" y="${ty + 14}" font-family="${mono}" font-size="8" fill="${C_TEXT}" font-weight="600">SECTION REFERENCES</text>`;
   svg += `<text x="${tx + 8}" y="${ty + 27}" font-family="${mono}" font-size="7" fill="${C_DIM}">A-A  Existing dwelling wall at eave — 65×65 SHS standoff, M12×100 lag screws @ 600 ctr into top plate</text>`;
-  svg += `<text x="${tx + 8}" y="${ty + 38}" font-family="${mono}" font-size="7" fill="${C_DIM}">B-B  Socket joint at rafter — 50×50×4 SHS stub + 50×5 packers, C250×65×2.4 rafter slips over, 4× M10 FHCS ea side</text>`;
-  svg += `<text x="${tx + 8}" y="${ty + 49}" font-family="${mono}" font-size="7" fill="${C_DIM}">C-C  Corner post base — C100×50×1.6 post on 150×150×8 base plate, 4× M16 chem anchors into 400×400×300 conc pad</text>`;
+  svg += `<text x="${tx + 8}" y="${ty + 38}" font-family="${mono}" font-size="7" fill="${C_DIM}">B-B  Socket joint at rafter — 50×50×4 SHS stub + 50×5 packers, ${rafterSize} rafter slips over, 4× M10 FHCS ea side</text>`;
+  svg += `<text x="${tx + 8}" y="${ty + 49}" font-family="${mono}" font-size="7" fill="${C_DIM}">C-C  Corner post base — ${postSize} post on 150×150×8 base plate, 4× M16 chem anchors into 400×400×300 conc pad</text>`;
 
   // General notes
   svg += `<rect x="${tx + 435}" y="${ty}" width="420" height="${refH}" fill="rgba(0,0,0,0.25)" stroke="${C_DIM}" stroke-width="0.3" rx="2"/>`;

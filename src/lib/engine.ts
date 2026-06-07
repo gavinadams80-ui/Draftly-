@@ -54,6 +54,36 @@ export function getAvailableForms(memberType: string): { value: MemberForm; labe
   }
 }
 
+// ── Forms actually present in a section pool ──
+// Drives the member selectors dynamically so any form the DB supports is offered
+// (no hard caps). 'plate' is a detail on a single C-section, so it's available
+// whenever open C-sections are present.
+const FORM_LABELS: Record<MemberForm, string> = {
+  open: 'Single C open',
+  plate: 'C + plate infill (boxed)',
+  b2b: '2C back-to-back',
+  rhs: 'RHS / SHS closed',
+};
+export function formsAvailableIn(sectionList: Section[]): { value: MemberForm; label: string }[] {
+  const present = new Set<MemberForm>();
+  for (const s of sectionList || []) {
+    const f = classifySectionForm(s.size) as MemberForm; // 'open' | 'b2b' | 'rhs'
+    present.add(f);
+    if (f === 'open') present.add('plate');
+  }
+  const order: MemberForm[] = ['open', 'plate', 'b2b', 'rhs'];
+  const out = order.filter((f) => present.has(f)).map((f) => ({ value: f, label: FORM_LABELS[f] }));
+  return out.length ? out : [{ value: 'open', label: FORM_LABELS.open }];
+}
+
+// Lightest passing result that matches the preferred form; falls back to the
+// lightest passing of any form so a valid section is always chosen.
+export function lightestPassingForm(results: UtilResult[], form: MemberForm): UtilResult | null {
+  const want = form === 'plate' ? 'open' : form; // plate sits on open C-sections
+  const inForm = results.filter((r) => classifySectionForm(r.sec.size) === want);
+  return lightestPassing(inForm) || lightestPassing(results);
+}
+
 // ── Filter sections by member form ──
 // 'plate' uses single C-sections from DB (plate is a construction detail, not a section type)
 export function filterByForm(sections: Section[], form: MemberForm): Section[] {
@@ -84,24 +114,22 @@ export function calcUtilisation(
   const phi = PHI[material] || 0.85;
   const results: UtilResult[] = [];
 
-  // Determine LTB factor from member form
   const memberForm = options?.memberForm;
-  let formLtbFactor = 1.0;
-  if (memberForm === 'open') formLtbFactor = 0.65;
-  else if (memberForm === 'plate') formLtbFactor = 0.92;  // plate closes section, near-RHS behaviour
-  else if (memberForm === 'b2b') formLtbFactor = 0.85;    // B2B partially restrains
-  else if (memberForm === 'rhs') formLtbFactor = 1.0;
 
   for (let i = 0; i < sectionList.length; i++) {
     const sec = sectionList[i];
     if (!sec || !sec.Z) continue;
 
-    const isRHS = classifySectionForm(sec.size) === 'rhs';
-    let ltbFactor = 1.0;
-    if (!isRHS) {
-      // Use explicit override, or derive from member form
-      ltbFactor = options?.ltbFactor ?? formLtbFactor;
-    }
+    // LTB factor is per-SECTION so a mixed pool (C + B2B + RHS) sizes correctly:
+    // RHS/SHS closed = 1.0, back-to-back = 0.85, single C = 0.65 (0.92 when boxed
+    // with a plate). This lets the selector offer any section the DB supports.
+    const secForm = classifySectionForm(sec.size); // 'open' | 'b2b' | 'rhs'
+    const isRHS = secForm === 'rhs';
+    let ltbFactor: number;
+    if (isRHS) ltbFactor = 1.0;
+    else if (secForm === 'b2b') ltbFactor = 0.85;
+    else ltbFactor = memberForm === 'plate' ? 0.92 : 0.65; // single C, boxed or open
+    if (options?.ltbFactor != null && !isRHS) ltbFactor = options.ltbFactor;
 
     const wU = LOAD_KPA_ULTIMATE * spacing;   // kN/m
     const wS = LOAD_KPA_SERVICE * spacing;    // kN/m
@@ -149,6 +177,78 @@ export function calcUtilisation(
 
   // Sort by weight ascending — smallest/lightest section first
   // so lightestPassing() picks the smallest section that passes
+  results.sort((a, b) => (a.sec.wt || 0) - (b.sec.wt || 0));
+  return results;
+}
+
+// ── Size sections against explicit design actions ──
+// Used for PORTAL-frame members, where the demand moment / axial / deflection
+// come from a frame analysis (calcPortalFrame) rather than a simple wL²/8 span.
+// Deflection scales ~ 1/I from the seed analysis (moment distribution is
+// near-constant with section). Columns get a beam-column interaction check.
+export function calcUtilisationCustom(
+  sectionList: Section[],
+  material: string,
+  demand: {
+    Mdesign: number;      // kNm — design bending moment
+    deltaDesign: number;  // mm — deflection computed at seedI
+    deltaMax: number;     // mm — deflection limit
+    seedI: number;        // mm⁴ — I used to compute deltaDesign
+    Naxial?: number;      // kN — design axial compression (columns)
+    bucklingLen?: number; // m — effective length for column compression
+  },
+  options?: { memberForm?: MemberForm }
+): UtilResult[] {
+  if (!sectionList || !sectionList.length) return [];
+  const phi = PHI[material] || 0.85;
+  const memberForm = options?.memberForm;
+  let formLtb = 1.0;
+  if (memberForm === 'open') formLtb = 0.65;
+  else if (memberForm === 'plate') formLtb = 0.92;
+  else if (memberForm === 'b2b') formLtb = 0.85;
+  else if (memberForm === 'rhs') formLtb = 1.0;
+
+  const results: UtilResult[] = [];
+  for (const sec of sectionList) {
+    if (!sec || !sec.Z) continue;
+    const isRHS = classifySectionForm(sec.size) === 'rhs';
+    const ltb = isRHS ? 1.0 : formLtb;
+    const MCapFull = (phi * (sec.fy || 450) * sec.Z) / 1e6;
+    const MCap = MCapFull * ltb;
+    const utilBend = MCap > 0 ? (demand.Mdesign / MCap) * 100 : 999;
+
+    // Deflection scales ~ 1/I from the seed analysis
+    const delta = demand.deltaDesign * (demand.seedI / (sec.I || 1));
+    const utilDefl = demand.deltaMax > 0 ? (delta / demand.deltaMax) * 100 : 0;
+
+    let util: number;
+    if (demand.Naxial && demand.Naxial > 0) {
+      // Beam-column interaction: M*/φMs + N*/φNc ≤ 1
+      const A_mm2 = ((sec.wt || 5) / 7850) * 1e6; // area from mass/density
+      const Ns = (phi * A_mm2 * (sec.fy || 450)) / 1000; // kN squash capacity
+      let alpha = 1;
+      if (demand.bucklingLen) {
+        const r = Math.sqrt((sec.I || 1) / A_mm2); // mm radius of gyration
+        const lambda = (demand.bucklingLen * 1000) / r;
+        alpha = 1 / (1 + Math.pow(lambda / 100, 2)); // simple column-curve reduction
+      }
+      const Nc = Ns * alpha;
+      const interaction =
+        (MCap > 0 ? demand.Mdesign / MCap : 9) + (Nc > 0 ? demand.Naxial / Nc : 9);
+      util = Math.max(interaction * 100, utilDefl);
+    } else {
+      util = Math.max(utilBend, utilDefl);
+    }
+
+    const passed = util <= 100;
+    const color = util < 70 ? '#4caf50' : util < 85 ? '#8bc34a' : util < 100 ? '#ff9800' : '#f44336';
+    results.push({
+      sec, util, passed, color,
+      M: demand.Mdesign, MCap, delta, deltaMax: demand.deltaMax,
+      label: sec.size + ' — ' + util.toFixed(1) + '%',
+      MCapFull, ltbFactor: ltb, isRHS,
+    });
+  }
   results.sort((a, b) => (a.sec.wt || 0) - (b.sec.wt || 0));
   return results;
 }

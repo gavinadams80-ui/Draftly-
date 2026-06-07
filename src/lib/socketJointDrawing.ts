@@ -41,7 +41,7 @@ function callout(x: number, y: number, text: string, lx: number, ly: number): st
 }
 
 // ── Socket Joint Detail — AS1100 ──
-export function generateSocketJointSVG(): string {
+export function generateSocketJointSVG(rafterSize = 'C250×65×2.4'): string {
   const info: DrawingInfo = {
     title: 'SOCKET JOINT · RAFT ER TO 65×65 STANDOFF',
     drawingNo: 'DRF-007-SOCK-01',
@@ -73,7 +73,7 @@ export function generateSocketJointSVG(): string {
   // Lip lines
   svg += `<line x1="${ex + raftL - 4}" y1="${raftY + 3}" x2="${ex + raftL}" y2="${raftY + 3}" stroke="${C_RAFT}" stroke-width="${M}"/>`;
   svg += `<line x1="${ex + raftL - 4}" y1="${raftY + raftH - 3}" x2="${ex + raftL}" y2="${raftY + raftH - 3}" stroke="${C_RAFT}" stroke-width="${M}"/>`;
-  svg += callout(ex + raftL / 2, raftY - 8, 'C250×65×2.4 RAFTER', ex + raftL / 2, raftY);
+  svg += callout(ex + raftL / 2, raftY - 8, `${rafterSize} RAFTER`, ex + raftL / 2, raftY);
 
   // 50×50 SHS stub — vertical
   const shsStubS = 50 * sc;

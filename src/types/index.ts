@@ -65,6 +65,14 @@ export type IntermediateFrameType = 'tied-rafter' | 'portal';
 // Base fixity for portal-frame analysis.
 export type BaseFixity = 'pinned' | 'fixed';
 
+// How the structure resists in-plane lateral (wind) load:
+//  'moment-frame' — the portal knees resist it by bending (frame sways).
+//  'cross-brace'  — diagonal tension brace in a bay takes it as axial; little sway.
+//  'knee-brace'   — diagonal struts at the knees stiffen the frame (reduced sway).
+//  'diaphragm'    — roof/wall sheeting acts as a shear diaphragm; little sway.
+//  'tied-to-wall' — attached structure restrained by the existing dwelling wall.
+export type BracingType = 'moment-frame' | 'cross-brace' | 'knee-brace' | 'diaphragm' | 'tied-to-wall';
+
 export interface MemberForms {
   post: MemberForm;
   beam: MemberForm;
@@ -100,6 +108,9 @@ export interface ProjectConfig {
   // Intermediate frames: simple tied rafter (truss) vs untied portal moment frame.
   intermediateFrame: IntermediateFrameType;
   baseFixity: BaseFixity;   // only used when intermediateFrame === 'portal'
+  // Lateral stability
+  bracing: BracingType;
+  windPressureKpa: number;  // net horizontal design wind pressure (ultimate)
 }
 
 export interface RoofingProfile {

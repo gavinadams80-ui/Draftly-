@@ -16,7 +16,7 @@ import {
   getConnectionsForMember,
   LOAD_KPA_ULTIMATE, DEFLECT_LIMIT_TOTAL,
 } from '@/lib/engine';
-import { calcPortalFrame, type PortalFrameResult } from '@/lib/portalFrame';
+import { calcPortalFrame, calcPortalLateral, type PortalFrameResult, type PortalLateralResult } from '@/lib/portalFrame';
 import { generateThreeViewSVG, generateGableInfillSVG } from '@/lib/drawings';
 import { generateBuildingPlanSVG, generateRoofGeometrySVG } from '@/lib/planDrawings';
 import { withTitleBlock, DEFAULT_TITLE_BLOCK, type TitleBlockData } from '@/lib/titleBlock';
@@ -48,6 +48,8 @@ const DEFAULT_CONFIG: ProjectConfig = {
   portalFrameCount: 3,
   intermediateFrame: 'tied-rafter',
   baseFixity: 'pinned',
+  bracing: 'moment-frame',
+  windPressureKpa: 0.6,
 };
 
 const DEFAULT_FORMS: MemberForms = {
@@ -488,6 +490,62 @@ export default function App() {
       }
     }
 
+    // ── LATERAL / WIND ──
+    // Horizontal wind load on one frame, applied at the eaves. The bracing scheme
+    // sets the load path: a moment frame resists it by sway (knee moments + drift);
+    // a braced bay (cross-brace / diaphragm / tie-to-wall) takes it as axial with
+    // little sway. Knee braces stiffen the moment frame (≈ half the drift).
+    const riseM = (actualSpan / 2) * Math.tan((config.pitch * Math.PI) / 180);
+    const H_wind = config.windPressureKpa * frameSpacing * (config.height + riseM / 2); // kN at eaves
+    const driftLimitMm = (config.height * 1000) / 150; // h/150 sway limit
+    const aM2 = (s: { wt: number }) => Math.max(1e-4, (s.wt || 5) / 7850);
+    const colSec = selPost?.sec;
+    const rafSec = selBeam?.sec;
+    let lateral: PortalLateralResult | null = null;
+    let braceForceKN = 0;
+    let braceSection: string | null = null;
+    let M_columnLat = 0;
+    const swayResisting = config.bracing === 'moment-frame' || config.bracing === 'knee-brace';
+    if (colSec && rafSec) {
+      if (swayResisting) {
+        const lat = calcPortalLateral(
+          {
+            span: actualSpan, eaveHeight: config.height, pitchDeg: config.pitch, w: 0, baseFixity: config.baseFixity,
+            column: { E: colSec.E, I: colSec.I, A: aM2(colSec) }, rafter: { E: rafSec.E, I: rafSec.I, A: aM2(rafSec) },
+          },
+          H_wind,
+        );
+        // Knee braces add diagonal struts at the knees → stiffer, less drift/moment.
+        lateral = config.bracing === 'knee-brace'
+          ? { ...lat, swayMm: lat.swayMm * 0.5, M_kneeLat: lat.M_kneeLat * 0.6, M_columnLat: lat.M_columnLat * 0.6 }
+          : lat;
+        M_columnLat = lateral.M_columnLat;
+      } else if (config.bracing === 'cross-brace') {
+        // Diagonal tension brace across one bay (eaves height × frame spacing).
+        const theta = Math.atan2(config.height, frameSpacing); // from horizontal
+        braceForceKN = H_wind / Math.cos(theta);
+        const phiT = 0.9;
+        const cand = sections.rafters
+          .map((s) => ({ s, cap: (phiT * ((s.wt / 7850) * 1e6) * (s.fy || 450)) / 1000 }))
+          .filter((x) => x.cap >= braceForceKN)
+          .sort((a, b) => a.s.wt - b.s.wt)[0];
+        braceSection = cand ? cand.s.size : null;
+      }
+      // 'diaphragm' / 'tied-to-wall': sheeting / dwelling wall carries the load; negligible sway.
+    }
+    // Fold the lateral column moment into the portal column design (moment frame).
+    if (portal && M_columnLat > 0 && colSec) {
+      const combined = calcUtilisationCustom(
+        sections.posts, config.constructionType,
+        { Mdesign: portal.M_columnMax + M_columnLat, deltaDesign: 0, deltaMax: 1e12, seedI: colSec.I, Naxial: portal.V, bucklingLen: config.height },
+        { memberForm: forms.post },
+      );
+      let cPost = overrides.post ? combined.find((r) => r.sec.size === overrides.post) || null : null;
+      if (!cPost) cPost = lightestPassingForm(combined, forms.post);
+      if (cPost) { selPost = cPost; postResults = combined; }
+    }
+    const driftOk = lateral ? lateral.swayMm <= driftLimitMm : true;
+
     // ── PURLIN ── spans between portal frames
     const purlinResults = calcUtilisation(
       sections.rafters, frameSpacing, purlinSpacing, config.constructionType,
@@ -565,6 +623,7 @@ export default function App() {
       postSpan, frameSpacing, purlinSpacing, bracingFactor, phi,
       dropperHeight, netDropperH, topChordAxialKN,
       portal,
+      lateral, H_wind, driftLimitMm, driftOk, braceForceKN, braceSection, M_columnLat,
     };
   }, [config, forms, overrides, selectedProfile]);
 
@@ -1323,6 +1382,70 @@ export default function App() {
                 <div style={{ fontSize: '9px', color: '#c9a84c', marginTop: 8, fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
                   ⚠ Footing/base must resist {calc.portal.H.toFixed(1)} kN horizontal thrust{config.baseFixity === 'fixed' ? ` + ${calc.portal.M_base.toFixed(1)} kNm base moment` : ' (pinned base — provide drag/brace or slab tie)'}. Frame carries roof load over {calc.frameSpacing.toFixed(2)} m tributary.
                 </div>
+              )}
+            </div>
+
+            {/* ── Lateral stability & bracing ── */}
+            <div style={{ marginBottom: 12, border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', background: 'var(--surface2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Lateral bracing</span>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {([['moment-frame', 'Moment frame'], ['cross-brace', 'Cross brace'], ['knee-brace', 'Knee brace'], ['diaphragm', 'Diaphragm'], ['tied-to-wall', 'Tie to wall']] as const).map(([val, lbl]) => (
+                    <button key={val} onClick={() => updateConfig({ bracing: val })}
+                      style={{
+                        fontSize: '11px', fontFamily: 'var(--mono)', padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
+                        border: `1px solid ${config.bracing === val ? '#26a69a' : 'var(--border)'}`,
+                        background: config.bracing === val ? 'rgba(38,166,154,0.15)' : 'transparent',
+                        color: config.bracing === val ? '#26a69a' : 'var(--text-muted)', fontWeight: config.bracing === val ? 700 : 400,
+                      }}>{lbl}</button>
+                  ))}
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)' }}>
+                  WIND
+                  <input type="number" step="0.1" value={config.windPressureKpa}
+                    onChange={(e) => updateConfig({ windPressureKpa: Math.max(0, parseFloat(e.target.value) || 0) })}
+                    style={{ width: 54, padding: '4px 6px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '11px' }} />
+                  kPa
+                </label>
+              </div>
+
+              <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 10 }}>
+                {config.bracing === 'moment-frame' ? <><strong style={{ color: 'var(--text)' }}>Moment frame —</strong> the portal knees resist lateral load by bending; the frame sways. Columns carry the sway moment and the drift is checked against h/150.</>
+                  : config.bracing === 'cross-brace' ? <><strong style={{ color: 'var(--text)' }}>Cross brace —</strong> a diagonal tension brace in a bay carries the lateral load as axial force, so the frames barely sway. The brace and its connections / footing drag must be designed.</>
+                  : config.bracing === 'knee-brace' ? <><strong style={{ color: 'var(--text)' }}>Knee brace —</strong> diagonal struts at the knees stiffen the frame, roughly halving the drift and knee moment versus a bare moment frame.</>
+                  : config.bracing === 'diaphragm' ? <><strong style={{ color: 'var(--text)' }}>Diaphragm —</strong> roof/wall sheeting acts as a shear diaphragm carrying lateral load to the supports; negligible frame sway (verify sheet / fastener shear).</>
+                  : <><strong style={{ color: 'var(--text)' }}>Tie to wall —</strong> the attached dwelling wall restrains the structure laterally; negligible sway in that direction (verify the tie connection).</>}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px,1fr))', gap: 8, marginTop: 12 }}>
+                {[
+                  { label: 'Wind load / frame', value: `${calc.H_wind.toFixed(1)} kN`, color: '#2196f3' },
+                  ...(calc.lateral ? [
+                    { label: `Sway (limit ${calc.driftLimitMm.toFixed(0)}mm)`, value: `${calc.lateral.swayMm.toFixed(0)} mm`, color: calc.driftOk ? '#4caf50' : '#f44336' },
+                    { label: 'Column sway moment', value: `${calc.M_columnLat.toFixed(1)} kNm`, color: '#ff9800' },
+                    { label: 'Base shear', value: `${calc.lateral.baseShear.toFixed(1)} kN`, color: '#9aa' },
+                  ] : config.bracing === 'cross-brace' ? [
+                    { label: 'Brace force (tension)', value: `${calc.braceForceKN.toFixed(1)} kN`, color: '#f44336' },
+                    { label: 'Brace section', value: calc.braceSection ?? '— none passes', color: calc.braceSection ? '#4caf50' : '#f44336' },
+                    { label: 'Base shear', value: `${calc.H_wind.toFixed(1)} kN`, color: '#9aa' },
+                  ] : [
+                    { label: 'Frame sway', value: '≈ 0 (braced)', color: '#4caf50' },
+                    { label: 'Lateral carried by', value: config.bracing === 'diaphragm' ? 'sheeting' : 'dwelling wall', color: '#9aa' },
+                  ]),
+                ].map(({ label, value, color }) => (
+                  <div key={label} style={{ background: 'var(--surface)', borderRadius: 6, padding: '8px 10px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontSize: '14px', fontFamily: 'var(--mono)', fontWeight: 700, color }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+              {calc.lateral && !calc.driftOk && (
+                <div style={{ fontSize: '9px', color: '#f44336', marginTop: 8, fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
+                  ⚠ Sway {calc.lateral.swayMm.toFixed(0)}mm exceeds h/150 = {calc.driftLimitMm.toFixed(0)}mm — stiffen the columns (larger section / fixed base) or add bracing.
+                </div>
+              )}
+              {config.bracing === 'cross-brace' && !calc.braceSection && (
+                <div style={{ fontSize: '9px', color: '#f44336', marginTop: 8, fontFamily: 'var(--mono)' }}>⚠ No standard brace section carries {calc.braceForceKN.toFixed(1)} kN — engineer to specify.</div>
               )}
             </div>
 

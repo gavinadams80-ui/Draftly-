@@ -166,21 +166,83 @@ export function generateRoofGeometrySVG(
     svg += `<text x="52" y="${noteY + 15}" font-family="${mono}" font-size="6.5" fill="${dimCol}">All intermediate portal frames: rafter only, no bottom chord  →  MOMENT PORTAL FRAMES (rigid portal).</text>`;
 
   } else {
-    // Skillion
-    const skillionH = triH * 0.6;
-    const topY = baseY - skillionH;
-    svg += `<line x1="${leftX}"  y1="${topY}"  x2="${rightX}" y2="${baseY}"  stroke="${rafterCol}" stroke-width="2.5"/>`;
-    svg += `<line x1="${leftX}"  y1="${baseY}" x2="${rightX}" y2="${baseY}"  stroke="${chordCol}"  stroke-width="2.5"/>`;
-    svg += `<line x1="${leftX}"  y1="${topY}"  x2="${leftX}"  y2="${baseY}"  stroke="${frameCol}"  stroke-width="2"/>`;
-    const dimY = baseY + 22;
-    svg += `<text x="${W / 2}" y="${dimY}" text-anchor="middle" font-family="${mono}" font-size="8" fill="${textCol}" font-weight="600">SPAN ${actualSpan.toFixed(2)}m · SKILLION ${pitch}°</text>`;
+    // ── Skillion (mono-pitch) — single slope over the FULL span ──
+    // Rise is measured across the whole span (not half-span as for a gable),
+    // so a skillion at the same pitch climbs roughly twice as high.
+    const pitchRad     = pitch * Math.PI / 180;
+    const riseSk       = actualSpan * Math.tan(pitchRad);
+    const rafterLenSk  = Math.sqrt(actualSpan * actualSpan + riseSk * riseSk);
+    const scSk         = Math.min(drawW / actualSpan, drawH / Math.max(riseSk, 0.5)) * 0.82;
+    const triWSk       = actualSpan * scSk;
+    const triHSk       = riseSk * scSk;
+    const leftXSk      = margin.left + (drawW - triWSk) / 2;
+    const rightXSk     = leftXSk + triWSk;
+    const topYSk       = baseY - triHSk;   // high (left) eave
+    const lowYSk       = baseY;            // low (right) eave
+
+    // ── Structure lines ──
+    svg += `<line x1="${leftXSk}"  y1="${topYSk}" x2="${rightXSk}" y2="${lowYSk}" stroke="${rafterCol}" stroke-width="2.5"/>`; // rafter
+    svg += `<line x1="${leftXSk}"  y1="${lowYSk}" x2="${rightXSk}" y2="${lowYSk}" stroke="${chordCol}"  stroke-width="2.5"/>`; // tie / wall plate level
+    svg += `<line x1="${leftXSk}"  y1="${topYSk}" x2="${leftXSk}"  y2="${lowYSk}" stroke="${frameCol}"  stroke-width="2"/>`;   // high-side upstand
+    // High and low support markers
+    svg += `<circle cx="${leftXSk}"  cy="${topYSk}" r="5" fill="${frameCol}" opacity="0.9"/>`;
+    svg += `<circle cx="${leftXSk}"  cy="${lowYSk}" r="5" fill="${frameCol}" opacity="0.9"/>`;
+    svg += `<circle cx="${rightXSk}" cy="${lowYSk}" r="5" fill="${frameCol}" opacity="0.9"/>`;
+
+    // ── Pitch angle arc at the low (right) corner ──
+    const arcR = 26;
+    const aEndX = rightXSk - arcR * Math.cos(pitchRad);
+    const aEndY = lowYSk - arcR * Math.sin(pitchRad);
+    svg += `<path d="M ${rightXSk - arcR},${lowYSk} A ${arcR},${arcR} 0 0 1 ${aEndX},${aEndY}" fill="none" stroke="${dimCol}" stroke-width="0.8"/>`;
+    svg += `<text x="${rightXSk - 34}" y="${lowYSk - 8}" text-anchor="middle" font-family="${mono}" font-size="8" fill="${dimCol}">${pitch}°</text>`;
+
+    // ── Eave labels ──
+    svg += `<text x="${leftXSk}"  y="${topYSk - 8}" text-anchor="middle" font-family="${mono}" font-size="8.5" fill="${rafterCol}" font-weight="600">HIGH EAVE</text>`;
+    svg += `<text x="${rightXSk + 4}" y="${lowYSk - 8}" text-anchor="start" font-family="${mono}" font-size="8.5" fill="${rafterCol}" font-weight="600">LOW EAVE</text>`;
+
+    // ── Rafter length label (rotated along slope) ──
+    const dmX = (leftXSk + rightXSk) / 2;
+    const dmY = (topYSk + lowYSk) / 2 - 8;
+    const slopeDeg = Math.atan2(lowYSk - topYSk, rightXSk - leftXSk) * 180 / Math.PI;
+    svg += `<text x="${dmX}" y="${dmY}" text-anchor="middle" font-family="${mono}" font-size="8" fill="${rafterCol}" font-weight="600" transform="rotate(${slopeDeg},${dmX},${dmY})">${rafterLenSk.toFixed(3)}m</text>`;
     if (rafterSize) {
-      svg += `<text x="${W / 2}" y="${dimY + 14}" text-anchor="middle" font-family="${mono}" font-size="7.5" fill="${rafterCol}">RAFTER  [${rafterSize}]</text>`;
+      svg += `<text x="${dmX}" y="${dmY + 12}" text-anchor="middle" font-family="${mono}" font-size="7" fill="${rafterCol}" transform="rotate(${slopeDeg},${dmX},${dmY + 12})">[${rafterSize}]</text>`;
     }
-    const statsS = [`Span: ${actualSpan.toFixed(2)}m`, `Rise: ${rise.toFixed(3)}m`, `Pitch: ${pitch}°`];
+
+    // ── Rise dimension (left of high upstand) ──
+    const dimLX = leftXSk - 14;
+    svg += `<line x1="${dimLX}" y1="${topYSk}" x2="${dimLX}" y2="${lowYSk}" stroke="${dimCol}" stroke-width="0.7"/>`;
+    svg += `<line x1="${dimLX - 3}" y1="${topYSk}" x2="${dimLX + 3}" y2="${topYSk}" stroke="${dimCol}" stroke-width="0.7"/>`;
+    svg += `<line x1="${dimLX - 3}" y1="${lowYSk}" x2="${dimLX + 3}" y2="${lowYSk}" stroke="${dimCol}" stroke-width="0.7"/>`;
+    svg += `<text x="${dimLX - 6}" y="${(topYSk + lowYSk) / 2}" text-anchor="middle" transform="rotate(-90,${dimLX - 6},${(topYSk + lowYSk) / 2})" font-family="${mono}" font-size="7.5" fill="${textCol}">RISE ${riseSk.toFixed(3)}m</text>`;
+
+    // ── Span dimension (below) ──
+    const dimY = lowYSk + 30;
+    svg += `<line x1="${leftXSk}"  y1="${dimY}" x2="${rightXSk}" y2="${dimY}" stroke="${dimCol}" stroke-width="0.7"/>`;
+    svg += `<line x1="${leftXSk}"  y1="${dimY - 4}" x2="${leftXSk}"  y2="${dimY + 4}" stroke="${dimCol}" stroke-width="0.7"/>`;
+    svg += `<line x1="${rightXSk}" y1="${dimY - 4}" x2="${rightXSk}" y2="${dimY + 4}" stroke="${dimCol}" stroke-width="0.7"/>`;
+    svg += `<text x="${(leftXSk + rightXSk) / 2}" y="${dimY - 4}" text-anchor="middle" font-family="${mono}" font-size="8.5" fill="${textCol}" font-weight="600">SPAN ${actualSpan.toFixed(2)}m · SKILLION ${pitch}°</text>`;
+
+    // ── Stats panel ──
+    const statsS = [
+      `Brick span:  ${span.toFixed(2)}m`,
+      `Frame span:  ${actualSpan.toFixed(2)}m`,
+      `Rise:        ${riseSk.toFixed(3)}m`,
+      `Rafter:      ${rafterLenSk.toFixed(3)}m`,
+      `Pitch:       ${pitch}°`,
+      `High wall:   ${(height + riseSk).toFixed(2)}m`,
+      `Low wall:    ${height.toFixed(2)}m`,
+    ];
     statsS.forEach((s, i) => {
-      svg += `<text x="${W - 10}" y="${margin.top + 14 + i * 13}" text-anchor="end" font-family="${mono}" font-size="8" fill="${dimCol}">${s}</text>`;
+      svg += `<text x="${W - 10}" y="${margin.top + 12 + i * 14}" text-anchor="end" font-family="${mono}" font-size="8" fill="${dimCol}">${s}</text>`;
     });
+
+    // ── Engineering note ──
+    const noteY = H - 34;
+    svg += `<line x1="10" y1="${noteY - 8}" x2="${W - 10}" y2="${noteY - 8}" stroke="${dimCol}" stroke-width="0.4" opacity="0.35"/>`;
+    svg += `<text x="12" y="${noteY + 3}" font-family="${mono}" font-size="6.5" fill="${chordCol}" font-weight="600">NOTE:</text>`;
+    svg += `<text x="52" y="${noteY + 3}" font-family="${mono}" font-size="6.5" fill="${dimCol}">Mono-pitch (skillion): single rafter from high to low eave — no ridge, no bottom-chord tie.</text>`;
+    svg += `<text x="52" y="${noteY + 15}" font-family="${mono}" font-size="6.5" fill="${dimCol}">Rise = span × tan(pitch). Fall drains to the LOW eave gutter; high eave flashes to wall/parapet.</text>`;
   }
 
   svg += `</svg>`;
@@ -284,6 +346,17 @@ export function generateBuildingPlanSVG(
   const purlinXsL  = purlinMs.map(m => frameMidX - (m / halfSpanM) * halfSpanPx);
   const purlinXsR  = purlinMs.map(m => frameMidX + (m / halfSpanM) * halfSpanPx);
 
+  // ── Skillion purlins — a single continuous run across the full frame width ──
+  // Mono-pitch has no ridge: purlins march evenly from the high-side eave to the
+  // low-side eave. First line 75mm off the high eave, last line at the low eave.
+  const skillionN  = 9;
+  const skFrameW   = frameRightX - frameLeftX;
+  const skNearM    = 0.075;
+  const skFullM    = skFrameW / sc;
+  const skStep     = (skFullM - skNearM) / (skillionN - 1);
+  const skillionMs = Array.from({ length: skillionN }, (_, i) => skNearM + i * skStep);
+  const skillionXs = skillionMs.map(m => frameLeftX + (m / skFullM) * skFrameW);
+
   // ── Connection counts ──
   const leftCount  = frameYs.filter(fy => (fy - frameTopY) / sc <= leftWallDepth  + 0.01).length;
   const rightCount = frameYs.filter(fy => (fy - frameTopY) / sc <= rightWallDepth + 0.01).length;
@@ -302,7 +375,7 @@ export function generateBuildingPlanSVG(
 
   // ── Title ──
   const attachLabel = attachment === 'three-side' ? '3-SIDE ATTACHED' : attachment === 'attached' ? 'ATTACHED' : 'FREESTANDING';
-  svg += `<text x="${W / 2}" y="18" text-anchor="middle" font-family="${mono}" font-size="9.5" fill="${textCol}" font-weight="600">PLAN VIEW · ${attachLabel} · ${width.toFixed(2)}m × ${depth.toFixed(2)}m · ${portalFrameCount} PORTAL FRAMES · ${(standoff * 1000).toFixed(0)}mm STANDOFF</text>`;
+  svg += `<text x="${W / 2}" y="18" text-anchor="middle" font-family="${mono}" font-size="9.5" fill="${textCol}" font-weight="600">PLAN VIEW · ${isGable ? 'GABLE' : 'SKILLION'} · ${attachLabel} · ${width.toFixed(2)}m × ${depth.toFixed(2)}m · ${portalFrameCount} PORTAL FRAMES · ${(standoff * 1000).toFixed(0)}mm STANDOFF</text>`;
 
   // North arrow — rotated by northRotation degrees (clockwise) around its centre
   const nX = W - 28, nY = margin.top + 14;
@@ -460,12 +533,22 @@ export function generateBuildingPlanSVG(
   // ══════════════════════════════════════════════════════════════════
   // PURLIN LINES (vertical, parallel to ridge)
   // ══════════════════════════════════════════════════════════════════
-  for (let i = 0; i < purlinXsL.length; i++) {
-    const isEave = i === purlinXsL.length - 1;
-    const sw = isEave ? 1.0 : 0.6;
-    const da = isEave ? '6,3' : '3,4';
-    svg += `<line x1="${purlinXsL[i]}" y1="${frameTopY}" x2="${purlinXsL[i]}" y2="${frameBotY}" stroke="${purlinCol}" stroke-width="${sw}" stroke-dasharray="${da}" opacity="0.7"/>`;
-    svg += `<line x1="${purlinXsR[i]}" y1="${frameTopY}" x2="${purlinXsR[i]}" y2="${frameBotY}" stroke="${purlinCol}" stroke-width="${sw}" stroke-dasharray="${da}" opacity="0.7"/>`;
+  if (isGable) {
+    for (let i = 0; i < purlinXsL.length; i++) {
+      const isEave = i === purlinXsL.length - 1;
+      const sw = isEave ? 1.0 : 0.6;
+      const da = isEave ? '6,3' : '3,4';
+      svg += `<line x1="${purlinXsL[i]}" y1="${frameTopY}" x2="${purlinXsL[i]}" y2="${frameBotY}" stroke="${purlinCol}" stroke-width="${sw}" stroke-dasharray="${da}" opacity="0.7"/>`;
+      svg += `<line x1="${purlinXsR[i]}" y1="${frameTopY}" x2="${purlinXsR[i]}" y2="${frameBotY}" stroke="${purlinCol}" stroke-width="${sw}" stroke-dasharray="${da}" opacity="0.7"/>`;
+    }
+  } else {
+    // Skillion — single continuous run; both ends are eaves (high left, low right)
+    for (let i = 0; i < skillionXs.length; i++) {
+      const isEave = i === 0 || i === skillionXs.length - 1;
+      const sw = isEave ? 1.0 : 0.6;
+      const da = isEave ? '6,3' : '3,4';
+      svg += `<line x1="${skillionXs[i]}" y1="${frameTopY}" x2="${skillionXs[i]}" y2="${frameBotY}" stroke="${purlinCol}" stroke-width="${sw}" stroke-dasharray="${da}" opacity="0.7"/>`;
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -482,8 +565,10 @@ export function generateBuildingPlanSVG(
     // Label — left of house wall, clear of everything
     svg += `<text x="${houseLeftX - 8}" y="${fy + 4}" text-anchor="end" font-family="${mono}" font-size="7.5" fill="${frameCol}" font-weight="600">PF${i + 1}</text>`;
 
-    // Ridge apex diamond
-    svg += `<polygon points="${frameMidX},${fy - 5} ${frameMidX + 4},${fy} ${frameMidX},${fy + 5} ${frameMidX - 4},${fy}" fill="${ridgeCol}" opacity="0.9"/>`;
+    // Ridge apex diamond (gable only — skillion has no ridge)
+    if (isGable) {
+      svg += `<polygon points="${frameMidX},${fy - 5} ${frameMidX + 4},${fy} ${frameMidX},${fy + 5} ${frameMidX - 4},${fy}" fill="${ridgeCol}" opacity="0.9"/>`;
+    }
 
     // Left side — standoff or post
     const leftHasWall = (attachment === 'three-side') && fdm <= leftWallDepth + 0.01;
@@ -548,9 +633,12 @@ export function generateBuildingPlanSVG(
   if (attachment !== 'freestanding') {
     const rcX = frameMidX;
     svg += `<rect x="${rcX - 3}" y="${wallBotY}" width="6" height="${so}" fill="rgba(232,192,96,0.55)"/>`;
-    svg += `<rect x="${rcX - 5}" y="${frameTopY - 5}" width="10" height="10" fill="none" stroke="${ridgeCol}" stroke-width="1.4"/>`;
-    svg += `<line x1="${rcX - 5}" y1="${frameTopY - 5}" x2="${rcX + 5}" y2="${frameTopY + 5}" stroke="${ridgeCol}" stroke-width="0.9"/>`;
-    svg += `<line x1="${rcX + 5}" y1="${frameTopY - 5}" x2="${rcX - 5}" y2="${frameTopY + 5}" stroke="${ridgeCol}" stroke-width="0.9"/>`;
+    if (isGable) {
+      // Gable ridge bottom-chord tie connection to the house (cross symbol)
+      svg += `<rect x="${rcX - 5}" y="${frameTopY - 5}" width="10" height="10" fill="none" stroke="${ridgeCol}" stroke-width="1.4"/>`;
+      svg += `<line x1="${rcX - 5}" y1="${frameTopY - 5}" x2="${rcX + 5}" y2="${frameTopY + 5}" stroke="${ridgeCol}" stroke-width="0.9"/>`;
+      svg += `<line x1="${rcX + 5}" y1="${frameTopY - 5}" x2="${rcX - 5}" y2="${frameTopY + 5}" stroke="${ridgeCol}" stroke-width="0.9"/>`;
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -566,21 +654,36 @@ export function generateBuildingPlanSVG(
   if (isGable) {
     svg += `<text x="${frameMidX}" y="${strip1}" text-anchor="middle" font-family="${mono}" font-size="7" fill="${structCol}" font-weight="600">▲ GABLE END — FRONT FACE</text>`;
     svg += `<text x="${frameMidX}" y="${strip1 + 11}" text-anchor="middle" font-family="${mono}" font-size="7" fill="${structCol}" font-weight="600">▼ GABLE END — BACK FACE  (ridge btm chord conn. to house)</text>`;
+  } else {
+    // Skillion — fall (slope) runs across the span: high eave left, low eave right
+    svg += `<text x="${frameMidX}" y="${strip1}" text-anchor="middle" font-family="${mono}" font-size="7" fill="${structCol}" font-weight="600">SKILLION — FALL ACROSS SPAN  ◄ HIGH EAVE (left)   ·   LOW EAVE / GUTTER (right) ►</text>`;
+    // Edge labels running along the two eaves
+    svg += `<text x="${frameLeftX - 4}" y="${frameMidY}" text-anchor="middle" transform="rotate(-90,${frameLeftX - 4},${frameMidY})" font-family="${mono}" font-size="6" fill="${structCol}" font-weight="600">HIGH SIDE EAVE</text>`;
+    svg += `<text x="${frameRightX + 9}" y="${frameMidY}" text-anchor="middle" transform="rotate(-90,${frameRightX + 9},${frameMidY})" font-family="${mono}" font-size="6" fill="${purlinCol}" font-weight="600">LOW EAVE / GUTTER</text>`;
   }
 
-  // Purlin labels — one row below gable label
-  for (let i = 0; i < purlinXsL.length; i++) {
-    const isEave = i === purlinXsL.length - 1;
-    const lbl = isEave ? 'EAVE' : `P${i + 1}`;
-    svg += `<text x="${purlinXsL[i]}" y="${strip2}" text-anchor="middle" font-family="${mono}" font-size="5.5" fill="${purlinCol}">${lbl}</text>`;
-    svg += `<text x="${purlinXsR[i]}" y="${strip2}" text-anchor="middle" font-family="${mono}" font-size="5.5" fill="${purlinCol}">${lbl}</text>`;
+  // Purlin labels — one row below gable/eave label
+  if (isGable) {
+    for (let i = 0; i < purlinXsL.length; i++) {
+      const isEave = i === purlinXsL.length - 1;
+      const lbl = isEave ? 'EAVE' : `P${i + 1}`;
+      svg += `<text x="${purlinXsL[i]}" y="${strip2}" text-anchor="middle" font-family="${mono}" font-size="5.5" fill="${purlinCol}">${lbl}</text>`;
+      svg += `<text x="${purlinXsR[i]}" y="${strip2}" text-anchor="middle" font-family="${mono}" font-size="5.5" fill="${purlinCol}">${lbl}</text>`;
+    }
+    svg += `<text x="${frameMidX}" y="${strip3}" text-anchor="middle" font-family="${mono}" font-size="6" fill="${dimCol}">P1 at 75mm from ridge  ·  P2–P4 evenly spaced  ·  EAVE at frame edge</text>`;
+  } else {
+    for (let i = 0; i < skillionXs.length; i++) {
+      const lbl = i === 0 ? 'HE' : i === skillionXs.length - 1 ? 'LE' : `P${i}`;
+      svg += `<text x="${skillionXs[i]}" y="${strip2}" text-anchor="middle" font-family="${mono}" font-size="5.5" fill="${purlinCol}">${lbl}</text>`;
+    }
+    svg += `<text x="${frameMidX}" y="${strip3}" text-anchor="middle" font-family="${mono}" font-size="6" fill="${dimCol}">HE = high eave (75mm in)  ·  P1–P${skillionXs.length - 2} evenly spaced  ·  LE = low eave at frame edge</text>`;
   }
-  svg += `<text x="${frameMidX}" y="${strip3}" text-anchor="middle" font-family="${mono}" font-size="6" fill="${dimCol}">P1 at 75mm from ridge  ·  P2–P4 evenly spaced  ·  EAVE at frame edge</text>`;
 
   // Connection summary
+  const connNote = isGable ? '1 gable btm chord conn.' : '1 high-side ledger conn.';
   const note = attachment === 'freestanding'
     ? `${portalFrameCount * 2} posts (freestanding)`
-    : `${houseConns} connections to house  (${leftCount}L + ${rightCount}R + 1 gable btm chord conn.)  ·  ${cornerPostCount} corner post${cornerPostCount !== 1 ? 's' : ''} to ground`;
+    : `${houseConns} connections to house  (${leftCount}L + ${rightCount}R + ${connNote})  ·  ${cornerPostCount} corner post${cornerPostCount !== 1 ? 's' : ''} to ground`;
   svg += `<text x="${W / 2}" y="${strip4}" text-anchor="middle" font-family="${mono}" font-size="7" fill="${dimCol}">${note}</text>`;
 
   // ══════════════════════════════════════════════════════════════════
@@ -594,10 +697,10 @@ export function generateBuildingPlanSVG(
   const legItems: LegItem[] = [
     ['square',    postCol,     'Base post'],
     ['hline',     frameCol,    'Portal frame'],
-    ['vdash',     ridgeCol,    'Ridge beam'],
+    ...(isGable ? [['vdash', ridgeCol, 'Ridge beam'] as LegItem] : []),
     ['vdash',     purlinCol,   'Purlin'],
     ['circle',    standoffCol, 'Standoff (SHS thru fascia)'],
-    ['xcross',    ridgeCol,    'Ridge btm chord conn.'],
+    ...(isGable ? [['xcross', ridgeCol, 'Ridge btm chord conn.'] as LegItem] : []),
     ['hatch',     houseCol,    'Existing dwelling'],
     ['redcircle', '#f44336',   'Corner post'],
   ];

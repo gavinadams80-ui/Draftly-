@@ -73,9 +73,10 @@ export function generateSideElevationSVG(
   // Eave / fascia line (front edge of roof) and ridge line
   s += `<line x1="${X(0)}" y1="${Y(eaveHeightM)}" x2="${X(depthM)}" y2="${Y(eaveHeightM)}" stroke="${steelCol}" stroke-width="2.2"/>`;
   if (ridgeM > eaveHeightM + 0.01) {
+    const highLabel = isGable ? 'RIDGE LINE (beyond)' : 'HIGH EAVE (beyond)';
     s += `<line x1="${X(0)}" y1="${Y(ridgeM)}" x2="${X(depthM)}" y2="${Y(ridgeM)}" stroke="${steelCol}" stroke-width="1.4" stroke-dasharray="6,3"/>`;
-    s += `<text x="${X(depthM / 2)}" y="${Y(ridgeM) - 5}" font-family="${mono}" font-size="8" fill="${dimCol}" text-anchor="middle">RIDGE LINE (beyond)</text>`;
-    // light roof slope hints at the near gable end
+    s += `<text x="${X(depthM / 2)}" y="${Y(ridgeM) - 5}" font-family="${mono}" font-size="8" fill="${dimCol}" text-anchor="middle">${highLabel}</text>`;
+    // light roof slope hints at the near rake end
     s += `<line x1="${X(0)}" y1="${Y(eaveHeightM)}" x2="${X(0)}" y2="${Y(ridgeM)}" stroke="${steelCol}" stroke-width="0.8" opacity="0.5"/>`;
     s += `<line x1="${X(depthM)}" y1="${Y(eaveHeightM)}" x2="${X(depthM)}" y2="${Y(ridgeM)}" stroke="${steelCol}" stroke-width="0.8" opacity="0.5"/>`;
   }
@@ -108,7 +109,7 @@ export function generateSideElevationSVG(
   if (ridgeM > eaveHeightM + 0.01) {
     const dimX2 = dimX + 2;
     s += `<line x1="${dimX2 + 20}" y1="${groundY}" x2="${dimX2 + 20}" y2="${Y(ridgeM)}" stroke="${dimCol}" stroke-width="0.5" opacity="0.7"/>`;
-    s += `<text x="${dimX2 + 24}" y="${Y(ridgeM) + 3}" font-family="${mono}" font-size="8" fill="${steelCol}">RIDGE ${ridgeM.toFixed(2)} m</text>`;
+    s += `<text x="${dimX2 + 24}" y="${Y(ridgeM) + 3}" font-family="${mono}" font-size="8" fill="${steelCol}">${isGable ? 'RIDGE' : 'HIGH'} ${ridgeM.toFixed(2)} m</text>`;
   }
 
   // Title

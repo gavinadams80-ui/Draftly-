@@ -409,9 +409,10 @@ function drawCornerPost(px: number, py: number, pw: number, ph: number, postSize
 export function generateFullElevationSVG(
   rafterSize = 'C250 × 65 × 2.4',
   postSize = 'C100 × 50 × 1.6',
+  isGable = true,
 ): string {
   const info: DrawingInfo = {
-    title: 'DETAIL ELEVATION — ATTACHED GABLE STRUCTURE',
+    title: `DETAIL ELEVATION — ATTACHED ${isGable ? 'GABLE' : 'SKILLION'} STRUCTURE`,
     drawingNo: 'DRF-002-ELEV-01',
     scale: '1 : 5',
     date: '29/05/2026',

@@ -13,6 +13,7 @@ export function generateWallSectionSVG(
   bottomChordD    = 150,               // mm — bottom chord section depth
   frameType: 'back' | 'intermediate' | 'front' = 'intermediate',
   columnD         = 100,               // mm — column section depth (PF3 right side)
+  isGable         = true,              // false → skillion (mono-pitch) cross-section
 ): string {
   const W = 1060, H = 600;
   const sc = 0.12; // px/mm
@@ -197,17 +198,21 @@ export function generateWallSectionSVG(
   const gutSW     = 1.2;
 
   // ── LEFT WALL gutter ──
-  // Back of gutter 30mm into the span from the fascia face
+  // Back of gutter 30mm into the span from the fascia face.
+  // Skillion: the LEFT side is the HIGH eave — no gutter there (water falls away
+  // to the low side), so the left gutter is drawn for gable only.
   const gutOffset = 30 * sc;
   const gLInnX = lBR + gutOffset;        // back / inner hook leg — 30mm into span
   const gLOutX = gLInnX + gutW;          // front / outer leg — 115mm further in
 
-  svg += ln(gLInnX, gutBotY, gLOutX,  gutBotY, gutCol, gutSW);           // bottom
-  svg += ln(gLInnX, gutBotY, gLInnX,  gutBotY - gutLegL, gutCol, gutSW); // inner leg (62mm) — against fascia
-  svg += ln(gLOutX, gutBotY, gLOutX,  gutBotY - gutLegR, gutCol, gutSW); // outer leg (90mm) — toward span
-  // Hook on outer (span) leg
-  svg += ln(gLOutX, gutBotY - gutLegR, gLOutX + gutHook, gutBotY - gutLegR, gutCol, gutSW);
-  svg += ln(gLOutX + gutHook, gutBotY - gutLegR, gLOutX + gutHook, gutBotY - gutLegR - gutHookUp, gutCol, gutSW);
+  if (isGable) {
+    svg += ln(gLInnX, gutBotY, gLOutX,  gutBotY, gutCol, gutSW);           // bottom
+    svg += ln(gLInnX, gutBotY, gLInnX,  gutBotY - gutLegL, gutCol, gutSW); // inner leg (62mm) — against fascia
+    svg += ln(gLOutX, gutBotY, gLOutX,  gutBotY - gutLegR, gutCol, gutSW); // outer leg (90mm) — toward span
+    // Hook on outer (span) leg
+    svg += ln(gLOutX, gutBotY - gutLegR, gLOutX + gutHook, gutBotY - gutLegR, gutCol, gutSW);
+    svg += ln(gLOutX + gutHook, gutBotY - gutLegR, gLOutX + gutHook, gutBotY - gutLegR - gutHookUp, gutCol, gutSW);
+  }
 
   // ── RIGHT WALL gutter (mirrored) ──
   // Back of gutter (inner/hook leg) aligns with fascia face (rBL)
@@ -253,6 +258,11 @@ export function generateWallSectionSVG(
   if (frameType !== 'front') {
     svg += `<rect x="${rRhsEndX.toFixed(1)}" y="${rhsTopY.toFixed(1)}" width="${(rRhsStartX - rRhsEndX).toFixed(1)}" height="${rhsH.toFixed(1)}" fill="${rhsFill}" stroke="${rhsCol}" stroke-width="${RHS_T * sc * 0.5}"/>`;
   }
+
+  // ══════════════════════════════════════════════════════════════════
+  // ROOF BUILD-UP — gable (A-frame) vs skillion (mono-pitch) branch here
+  // ══════════════════════════════════════════════════════════════════
+  if (isGable) {
 
   // ── RAFTER SECTIONS — peak A-frame, side profile ──
   // Plumb cut at ridge (vertical) only — eave end unchanged (perpendicular to rafter).
@@ -626,6 +636,146 @@ export function generateWallSectionSVG(
     const rcTL = [rRhsEndX - connW,  connBotY - connL - connW * connTan ] as [number,number];
     const rcTR = [rRhsEndX,          connBotY - connL                   ] as [number,number];
     svg += poly([rcBR, rcBL, rcTL, rcTR], rhsFill, rhsCol, 0.8);
+  }
+
+  } else {
+    // ════════════════════════════════════════════════════════════════
+    // SKILLION (MONO-PITCH) ROOF — single rafter, HIGH (left) → LOW (right)
+    // No ridge. The slope drains to the low-side gutter; the high side
+    // flashes up against a raised steel upstand above the left wall.
+    // ════════════════════════════════════════════════════════════════
+    const pitchRad = pitchDeg * Math.PI / 180;
+
+    const rafterFill  = 'rgba(33,150,243,0.18)';
+    const rafterCol   = '#2196f3';
+    const insThickPx  = 75  * sc;
+    const sheetPx     = Math.max(2.0, 0.6 * sc);
+    const overlapPx   = 75  * sc;
+    const insFill     = 'rgba(255,200,60,0.28)';
+    const insStroke   = '#c8a010';
+    const sheetFill   = 'rgba(160,200,220,0.85)';
+    const sheetStroke = '#80b0c8';
+    const flashCol    = '#b0c8d8';
+    const flashSW     = 1.8;
+    const purlinCol2  = '#4488cc';
+    const purlinFill2 = 'rgba(68,136,204,0.25)';
+    const cleatCol    = '#c8a030';
+    const cleatFill   = 'rgba(200,160,48,0.55)';
+
+    type Pt = [number, number];
+    const polyS = (pts: Pt[], fill: string, stroke: string, sw = 0.8) =>
+      `<polygon points="${pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+
+    // ── Bearings: low eave on the right (datum), high eave raised on the left ──
+    const dRaf   = 250 * sc;                 // rafter section depth
+    const rBearX = rRhsEndX;                 // low (right) bearing
+    const rBearY = rhsTopY + 75 * sc;        // same datum as the gable bearing
+    const lBearX = lRhsEndX;                 // high (left) bearing
+    const run    = rBearX - lBearX;
+    const riseSk = run * Math.tan(pitchRad);
+    const lBearY = rBearY - riseSk;          // raised by the full-span rise
+
+    const len  = Math.sqrt(run * run + riseSk * riseSk);
+    const ux   = run / len;                  //  cos θ  (→ toward low/right)
+    const uy   = riseSk / len;               //  sin θ  (↓ downslope)
+    const nX   = -uy, nY = ux;               // into-rafter (downward) normal
+    const skyX =  uy, skyY = -ux;            // sky (upward) normal
+
+    // ── HIGH-SIDE UPSTAND — steel post above the left wall up to the high eave ──
+    const upW = Math.max(4, 75 * sc);
+    svg += `<rect x="${(lBearX - upW / 2).toFixed(1)}" y="${lBearY.toFixed(1)}" width="${upW.toFixed(1)}" height="${(brickTopY - lBearY).toFixed(1)}" fill="${rhsFill}" stroke="${rhsCol}" stroke-width="0.9"/>`;
+
+    // ── RAFTER (single sloping member, square end cuts) ──
+    svg += polyS([
+      [lBearX, lBearY],
+      [rBearX, rBearY],
+      [rBearX + nX * dRaf, rBearY + nY * dRaf],
+      [lBearX + nX * dRaf, lBearY + nY * dRaf],
+    ], rafterFill, rafterCol, 0.8);
+
+    // ── INSULATION (on rafter top, sky side) ──
+    const i1: Pt = [lBearX, lBearY];
+    const i2: Pt = [rBearX, rBearY];
+    const i3: Pt = [rBearX + skyX * insThickPx, rBearY + skyY * insThickPx];
+    const i4: Pt = [lBearX + skyX * insThickPx, lBearY + skyY * insThickPx];
+    svg += polyS([i1, i2, i3, i4], insFill, insStroke, 0.6);
+    const insPts = [i1, i2, i3, i4].map(p => p.join(',')).join(' ');
+    svg += `<clipPath id="skInsClip"><polygon points="${insPts}"/></clipPath>`;
+    svg += `<g clip-path="url(#skInsClip)">`;
+    for (let t = -insThickPx; t < run + insThickPx * 2; t += 8) {
+      svg += ln(lBearX + t, lBearY + skyY * insThickPx - 4, lBearX + t + insThickPx * 1.2, lBearY + 4, insStroke, 0.5);
+    }
+    svg += `</g>`;
+
+    // ── ROOF SHEET (on top of insulation; overhangs the low eave) ──
+    const shBotL: Pt = i4;
+    const shBotR: Pt = [i3[0] + ux * overlapPx, i3[1] + uy * overlapPx];
+    const shTopL: Pt = [i4[0] + skyX * sheetPx, i4[1] + skyY * sheetPx];
+    const shTopR: Pt = [shBotR[0] + skyX * sheetPx, shBotR[1] + skyY * sheetPx];
+    svg += polyS([shBotL, shBotR, shTopR, shTopL], sheetFill, sheetStroke, 0.8);
+
+    // ── HIGH-SIDE APRON FLASHING — turns up the upstand from the sheet ──
+    const apronUp = 130 * sc;
+    svg += ln(shTopL[0], shTopL[1], lBearX, i4[1], flashCol, flashSW);          // across to wall
+    svg += ln(lBearX, i4[1], lBearX, i4[1] - apronUp, flashCol, flashSW);       // up the upstand
+    svg += ln(lBearX, i4[1] - apronUp, lBearX - 18 * sc, i4[1] - apronUp, flashCol, flashSW); // small cap fold
+
+    // ── LOW-SIDE EAVE FLASHING — down the insulation end, fold toward gutter ──
+    const flashOut  = 30 * sc;
+    const flashDrop = 40 * sc;
+    const ef1: Pt = i3;                                  // top of insulation at low eave
+    const ef2: Pt = i2;                                  // bottom (rafter top) at low eave
+    const ef3: Pt = [i2[0] + ux * 5 * sc, i2[1] + uy * 5 * sc + 5 * sc];
+    const ef4: Pt = [ef3[0] + flashOut, ef3[1]];
+    const ef5: Pt = [ef4[0], ef4[1] + flashDrop];
+    ([[ef1, ef2], [ef2, ef3], [ef3, ef4], [ef4, ef5]] as [Pt, Pt][]).forEach(([a, b]) =>
+      { svg += ln(a[0], a[1], b[0], b[1], flashCol, flashSW); });
+
+    // ── PURLIN END PROFILES + CLEATS along the single rafter ──
+    const purlinCount = 5;
+    const pDpx = purlinD  * sc;
+    const pBfH = (purlinBf * sc) / 2;
+    const pTpx = Math.max(1.2, purlinT * sc);
+    const cleatH  = 50 * sc;
+    const cleatHw = Math.max(1.5, (5 / 2) * sc);
+    const lenMm   = len / sc;
+    const step    = (lenMm - 150) / (purlinCount - 1);
+
+    const drawSection = (cx: number, cy: number, hw: number, depth: number, thick: number, fill: string, stroke: string) => {
+      const p1: Pt = [cx - hw * ux, cy - hw * uy];
+      const p2: Pt = [cx + hw * ux, cy + hw * uy];
+      const p3: Pt = [p2[0] + depth * nX, p2[1] + depth * nY];
+      const p4: Pt = [p1[0] + depth * nX, p1[1] + depth * nY];
+      let s = polyS([p1, p2, p3, p4], fill, stroke, 0.8);
+      if (thick > 0) {
+        const iw = hw - thick, iD = depth - 2 * thick;
+        if (iw > 0.3 && iD > 0.5) {
+          const q1: Pt = [cx - iw * ux + thick * nX, cy - iw * uy + thick * nY];
+          const q2: Pt = [cx + iw * ux + thick * nX, cy + iw * uy + thick * nY];
+          const q3: Pt = [q1[0] + iD * nX, q1[1] + iD * nY];
+          const q4: Pt = [q2[0] + iD * nX, q2[1] + iD * nY];
+          s += polyS([q1, q2, q4, q3], 'rgba(15,16,20,0.7)', 'none', 0);
+        }
+      }
+      return s;
+    };
+
+    for (let i = 0; i < purlinCount; i++) {
+      const f  = (75 + i * step) / lenMm;
+      const cx = lBearX + f * run;
+      const cy = lBearY + f * riseSk;        // on the rafter top face
+      svg += drawSection(cx, cy, pBfH, pDpx, pTpx, purlinFill2, purlinCol2);   // purlin
+      svg += drawSection(cx, cy, cleatHw, cleatH, 0, cleatFill, cleatCol);     // cleat
+    }
+
+    // ── Eave / slope reference labels (mono, small) ──
+    const mono2 = 'DM Mono,monospace';
+    svg += `<text x="${lBearX.toFixed(1)}" y="${(lBearY - apronUp - 6).toFixed(1)}" text-anchor="middle" font-family="${mono2}" font-size="8" fill="${rafterCol}" font-weight="600">HIGH EAVE</text>`;
+    svg += `<text x="${(rBearX + 6).toFixed(1)}" y="${(rBearY - 6).toFixed(1)}" text-anchor="start" font-family="${mono2}" font-size="8" fill="${rafterCol}" font-weight="600">LOW EAVE</text>`;
+    const midRX = (lBearX + rBearX) / 2;
+    const midRY = (lBearY + rBearY) / 2 - 10;
+    const slopeDeg = Math.atan2(rBearY - lBearY, rBearX - lBearX) * 180 / Math.PI;
+    svg += `<text x="${midRX.toFixed(1)}" y="${midRY.toFixed(1)}" text-anchor="middle" font-family="${mono2}" font-size="7.5" fill="${rafterCol}" transform="rotate(${slopeDeg.toFixed(2)},${midRX.toFixed(1)},${midRY.toFixed(1)})">SKILLION ${pitchDeg}° MONO-PITCH</text>`;
   }
 
   // (labels deferred — added after all geometry is complete)

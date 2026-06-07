@@ -625,7 +625,9 @@ export default function App() {
         config.width, config.pitch, config.height, config.roofType === 'gable',
         calc.selBeam?.sec.size ?? null, calc.selLedger?.sec.size ?? null, standoff / 1000,
       ), titleBlock, 'Roof Geometry — Cross Section', 'S-003', 1, 1, 'NTS'),
-      description: 'Triangular geometry showing span, rise and rafter length. Pitch angles marked; gable apex = half-span × tan(pitch).',
+      description: config.roofType === 'gable'
+        ? 'Triangular geometry showing span, rise and rafter length. Pitch angles marked; gable apex rise = half-span × tan(pitch).'
+        : 'Mono-pitch (skillion) geometry showing span, rise and rafter length. Single slope from high to low eave; rise = span × tan(pitch).',
     });
 
     sheets.push({
@@ -633,7 +635,7 @@ export default function App() {
       svg: withTitleBlock(generateWallSectionSVG(
         config.depth * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        true, calc.selLedger?.sec.d ?? 150, 'back',
+        true, calc.selLedger?.sec.d ?? 150, 'back', 100, config.roofType === 'gable',
       ), titleBlock, 'Section A-A — PF1 Back (House Connection)', 'S-004', 1, 3, 'NTS'),
     });
 
@@ -642,6 +644,7 @@ export default function App() {
       svg: withTitleBlock(generateWallSectionSVG(
         config.depth * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
+        false, 150, 'intermediate', 100, config.roofType === 'gable',
       ), titleBlock, 'Section A-A — PF2 Intermediate', 'S-005', 2, 3, 'NTS'),
     });
 
@@ -650,7 +653,7 @@ export default function App() {
       svg: withTitleBlock(generateWallSectionSVG(
         config.depth * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        true, calc.selLedger?.sec.d ?? 150, 'front', calc.selPost?.sec.d ?? 100,
+        true, calc.selLedger?.sec.d ?? 150, 'front', calc.selPost?.sec.d ?? 100, config.roofType === 'gable',
       ), titleBlock, 'Section A-A — PF3 Front (Fascia End)', 'S-006', 3, 3, 'NTS'),
     });
 
@@ -658,6 +661,7 @@ export default function App() {
       title: 'Full Detail Elevation — Wall (A-A) · Socket Joint (B-B) · Post (C-C)', number: 'S-007',
       svg: withTitleBlock(generateFullElevationSVG(
         calc.selBeam?.sec.size ?? undefined, calc.selPost?.sec.size ?? undefined,
+        config.roofType === 'gable',
       ), titleBlock, 'Full Detail Elevation', 'S-007', 1, 1, 'NTS'),
       description: 'Three-panel detail elevation per AS1100. Left: dwelling wall at eave with 65×65 SHS standoff. Centre: socket joint — 50×50 stub with packers. Right: corner post base with concrete pad and anchors.',
     });

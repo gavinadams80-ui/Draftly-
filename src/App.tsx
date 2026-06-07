@@ -17,19 +17,21 @@ import {
   LOAD_KPA_ULTIMATE, DEFLECT_LIMIT_TOTAL,
 } from '@/lib/engine';
 import { calcPortalFrame, calcPortalLateral, type PortalFrameResult, type PortalLateralResult } from '@/lib/portalFrame';
-import { generateThreeViewSVG, generateGableInfillSVG } from '@/lib/drawings';
-import { generateBuildingPlanSVG, generateRoofGeometrySVG } from '@/lib/planDrawings';
-import { withTitleBlock, DEFAULT_TITLE_BLOCK, type TitleBlockData } from '@/lib/titleBlock';
-import { generateCornerPostSVG, generateRafterLedgerSVG, generateCrossBracingSVG } from '@/lib/connectionDrawings';
-import { generateSocketJointSVG, generateFasciaPenetrationSVG } from '@/lib/socketJointDrawing';
-import { generateWallSectionSVG } from '@/lib/wallSection';
-import { generateFullElevationSVG } from '@/lib/fullElevation';
+// ── Shared drawing library (single source of truth, both apps consume it) ──
+import {
+  generateThreeViewSVG, generateGableInfillSVG,
+  generateBuildingPlanSVG, generateRoofGeometrySVG,
+  withTitleBlock, DEFAULT_TITLE_BLOCK, type TitleBlockData,
+  generateCornerPostSVG, generateRafterLedgerSVG, generateCrossBracingSVG,
+  generateSocketJointSVG, generateFasciaPenetrationSVG,
+  generateWallSectionSVG, generateFullElevationSVG,
+  generateSitePlanSVG, type LatLng,
+  generateSideElevationSVG,
+} from '@draftly/drawings';
 import { generateBomSVG } from '@/lib/bomDrawing';
 import { parseHandoff } from '@/lib/handoffSchema';
 import { checkAsDesigned, summarise } from '@/lib/compliance';
 import { normalizeOverlays, getOverlayGuidance, type NormalizedOverlay } from '@/lib/overlays';
-import { generateSitePlanSVG, type LatLng } from '@/lib/sitePlan';
-import { generateSideElevationSVG } from '@/lib/sideElevation';
 import type { ExportSheet } from '@/lib/exportPdf';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';

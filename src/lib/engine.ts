@@ -325,17 +325,22 @@ const OPEN_FRONT_TYPES = ['carport', 'pergola', 'patio', 'verandah', 'deck'];
 export function bracingAdvice(opts: {
   material: string;
   buildingType: string;
+  attachment: string;
   span: number;       // m
   windKpa: number;
 }): { recommended: BracingType; rationale: string; flyBrace: string | null; longitudinal: string | null } {
   const isRHS = opts.material === 'steel';
   const openFront = OPEN_FRONT_TYPES.includes(opts.buildingType);
+  const attached = opts.attachment === 'attached' || opts.attachment === 'three-side';
   const bigSpan = opts.span > 7;
   const highWind = opts.windKpa >= 1.0;
 
   let recommended: BracingType;
   let rationale: string;
-  if (isRHS) {
+  if (attached) {
+    recommended = 'tied-to-wall';
+    rationale = `${opts.attachment === 'three-side' ? 'Three-side attached' : 'Attached'} — the existing dwelling wall${opts.attachment === 'three-side' ? 's' : ''} provide${opts.attachment === 'three-side' ? '' : 's'} the primary lateral restraint, so tie back to the house with adequate fixings${openFront ? ' and still brace the open front bay (cross-brace + roof plane)' : ''}. The ${isRHS ? 'RHS' : 'C-section'} frames carry gravity as before${!isRHS ? ', and still need fly bracing' : ''}.`;
+  } else if (isRHS) {
     recommended = 'moment-frame';
     rationale = `RHS frames are stiff and strong — rely on rigid portal (moment) action${
       openFront ? ', plus limited rod cross-bracing in the rear/side end bays and roof plane to keep the front clear'

@@ -13,6 +13,7 @@ export function generateWallSectionSVG(
   bottomChordD    = 150,               // mm — bottom chord section depth
   frameType: 'back' | 'intermediate' | 'front' = 'intermediate',
   columnD         = 100,               // mm — column section depth (PF3 right side)
+  rafterD         = 250,               // mm — rafter section depth (from engineering)
 ): string {
   const W = 1060, H = 600;
   const sc = 0.12; // px/mm
@@ -258,7 +259,7 @@ export function generateWallSectionSVG(
   // Plumb cut at ridge (vertical) only — eave end unchanged (perpendicular to rafter).
   // Shifted down 75mm.
   const pitchRad    = pitchDeg * Math.PI / 180;
-  const d           = 250 * sc;         // 250mm visible depth
+  const d           = rafterD * sc;     // rafter visible depth (from engineering)
   const bearY       = rhsTopY + 75 * sc; // shifted down 75mm
   const lBearX      = lRhsEndX;
   const rBearX      = rRhsEndX;

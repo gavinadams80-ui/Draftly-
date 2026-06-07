@@ -8,13 +8,15 @@ import {
   getSectionDB,
 } from '@/lib/sections';
 import {
-  calcUtilisation, filterByForm,
-  lightestPassing, getAvailableForms, getBracingFactor,
+  calcUtilisation, calcUtilisationCustom, classifySectionForm,
+  formsAvailableIn, lightestPassingForm, getBracingFactor,
   BUILDING_TYPES, MATERIAL_LABELS, STANDARDS,
   ROOFING_PROFILES, getRoofingProfile,
   CLADDING_TYPES, calcGableInfill,
   getConnectionsForMember,
+  LOAD_KPA_ULTIMATE, DEFLECT_LIMIT_TOTAL,
 } from '@/lib/engine';
+import { calcPortalFrame, type PortalFrameResult } from '@/lib/portalFrame';
 import { generateThreeViewSVG, generateGableInfillSVG } from '@/lib/drawings';
 import { generateBuildingPlanSVG, generateRoofGeometrySVG } from '@/lib/planDrawings';
 import { withTitleBlock, DEFAULT_TITLE_BLOCK, type TitleBlockData } from '@/lib/titleBlock';
@@ -44,6 +46,8 @@ const DEFAULT_CONFIG: ProjectConfig = {
   height: 3.5,
   pitch: 10,
   portalFrameCount: 3,
+  intermediateFrame: 'tied-rafter',
+  baseFixity: 'pinned',
 };
 
 const DEFAULT_FORMS: MemberForms = {
@@ -135,10 +139,11 @@ function MemberCard({
           <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginLeft: 2 }}>{open ? '▾' : '▸'}</span>
         </button>
 
-        {/* Section thumbnail — clipped to a tidy height when collapsed */}
+        {/* Section thumbnail — scaled down so the card stays compact; click toggles full detail */}
         <div
           onClick={() => setOpen((o) => !o)}
-          style={{ background: svgBg, borderRadius: '4px', padding: '4px', marginBottom: 8, border: `1px solid ${borderCol}`, maxHeight: open ? 'none' : 116, overflow: 'hidden', cursor: 'pointer' }}
+          className={`member-thumb${open ? ' open' : ''}`}
+          style={{ background: svgBg, borderRadius: '4px', padding: '4px', marginBottom: 8, border: `1px solid ${borderCol}`, overflow: 'hidden', cursor: 'pointer' }}
         >
           <div dangerouslySetInnerHTML={{ __html: svgHtml }} />
         </div>
@@ -148,49 +153,47 @@ function MemberCard({
           <span style={{ fontSize: '13px', fontFamily: 'var(--mono)', color: 'var(--text)', fontWeight: 600 }}>{result.sec.size}</span>
           <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)' }}>{result.sec.wt} kg/m</span>
         </div>
-        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: open ? 8 : 0 }}>
+        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: 8 }}>
           {result.sec.grade}
         </div>
 
-        {/* Detail — only when expanded */}
+        {/* Member selection — always visible: section family + specific passing section */}
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'var(--mono)', display: 'block', marginBottom: 3 }}>
+            Member form
+          </label>
+          <select
+            value={currentForm}
+            onChange={(e) => onFormChange(e.target.value)}
+            style={{
+              width: '100%', padding: '6px 8px', background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: '4px', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '11px', cursor: 'pointer',
+            }}
+          >
+            {availableForms.map((f) => (
+              <option key={f.value} value={f.value}>{f.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ marginBottom: open ? 8 : 0 }}>{dropdown}</div>
+
+        {/* Calc detail — only when expanded */}
         {open && (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: '10px', fontFamily: 'var(--mono)', marginBottom: 8 }}>
-              <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
-                M <span style={{ color: 'var(--text)' }}>{result.M.toFixed(2)}</span> kNm
-              </div>
-              <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
-                M&#x03C6; <span style={{ color: statusColor }}>{result.MCap.toFixed(2)}</span> kNm
-              </div>
-              <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
-                &#x03B4; <span style={{ color: 'var(--text)' }}>{result.delta.toFixed(1)}</span> mm
-              </div>
-              <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
-                &#x03B4;max <span style={{ color: 'var(--text)' }}>{result.deltaMax.toFixed(1)}</span> mm
-              </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: '10px', fontFamily: 'var(--mono)', marginTop: 8 }}>
+            <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+              M <span style={{ color: 'var(--text)' }}>{result.M.toFixed(2)}</span> kNm
             </div>
-
-            {/* Member Form selector */}
-            <div style={{ marginBottom: 8 }}>
-              <label style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'var(--mono)', display: 'block', marginBottom: 3 }}>
-                Member form
-              </label>
-              <select
-                value={currentForm}
-                onChange={(e) => onFormChange(e.target.value)}
-                style={{
-                  width: '100%', padding: '6px 8px', background: 'var(--surface)', border: '1px solid var(--border)',
-                  borderRadius: '4px', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '11px', cursor: 'pointer',
-                }}
-              >
-                {availableForms.map((f) => (
-                  <option key={f.value} value={f.value}>{f.label}</option>
-                ))}
-              </select>
+            <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+              M&#x03C6; <span style={{ color: statusColor }}>{result.MCap.toFixed(2)}</span> kNm
             </div>
-
-            {dropdown}
-          </>
+            <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+              &#x03B4; <span style={{ color: 'var(--text)' }}>{result.delta.toFixed(1)}</span> mm
+            </div>
+            <div style={{ background: 'rgba(0,0,0,0.15)', padding: '3px 6px', borderRadius: '3px', color: 'var(--text-muted)' }}>
+              &#x03B4;max <span style={{ color: 'var(--text)' }}>{result.deltaMax.toFixed(1)}</span> mm
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -360,6 +363,16 @@ export default function App() {
 
   const setOverride = useCallback((member: keyof MemberOverrides, size: string | null) => {
     setOverrides((prev) => ({ ...prev, [member]: size }));
+    // Keep the member-form selector in step with the chosen section's family
+    // (RHS/SHS → rhs, 2/ → b2b, C → open), but don't clobber a boxed 'plate' C.
+    if (size) {
+      const fam = classifySectionForm(size) as MemberForm; // 'open' | 'b2b' | 'rhs'
+      setForms((prev) => {
+        const cur = prev[member as keyof MemberForms];
+        if (fam === 'open' && cur === 'plate') return prev;
+        return cur === fam ? prev : { ...prev, [member]: fam };
+      });
+    }
   }, []);
 
   const resetOverrides = useCallback(() => {
@@ -408,71 +421,110 @@ export default function App() {
     const frameSpacing = config.depth / (config.portalFrameCount - 1);
     const phi = config.constructionType === 'timber' ? 0.85 : config.constructionType === 'aluminium' ? 0.65 : 0.90;
 
+    // Every member is sized against its FULL section pool (calcUtilisation now
+    // applies a per-section LTB factor), so any section that passes — C, B2B,
+    // square SHS or rectangular RHS — appears in the dropdown and can be chosen.
+    // The selected member form only biases the auto-pick via lightestPassingForm.
+    const beamPool = sections.beams || sections.rafters;
+
     // ── POST (column) ──
-    const postFiltered = filterByForm(sections.posts, forms.post);
-    const postResults = calcUtilisation(
-      postFiltered.length ? postFiltered : sections.posts,
-      config.height, 1.5, config.constructionType,
+    let postResults = calcUtilisation(
+      sections.posts, config.height, 1.5, config.constructionType,
       { memberForm: forms.post }
     );
     let selPost = overrides.post ? postResults.find((r) => r.sec.size === overrides.post) || null : null;
-    if (!selPost) selPost = lightestPassing(postResults);
+    if (!selPost) selPost = lightestPassingForm(postResults, forms.post);
 
     // ── BEAM (rafter) ── uses actual structural span (minus standoff)
-    const beamFiltered = filterByForm(sections.beams || sections.rafters, forms.beam);
-    const beamResults = calcUtilisation(
-      beamFiltered.length ? beamFiltered : sections.beams || sections.rafters,
-      actualSpan, 1.5, config.constructionType,
+    let beamResults = calcUtilisation(
+      beamPool, actualSpan, 1.5, config.constructionType,
       { memberForm: forms.beam }
     );
     let selBeam = overrides.beam ? beamResults.find((r) => r.sec.size === overrides.beam) || null : null;
-    if (!selBeam) selBeam = lightestPassing(beamResults);
+    if (!selBeam) selBeam = lightestPassingForm(beamResults, forms.beam);
+
+    // ── INTERMEDIATE PORTAL FRAME ──
+    // When the intermediate frame is an untied PORTAL (no bottom chord), the
+    // column + rafter are sized against the frame analysis — knee moment, column
+    // moment + axial, base thrust and sway — instead of a simple wL²/8 span.
+    // The frame carries roof load over its full tributary (frame spacing), and
+    // the simple-span seed sections above feed the relative-stiffness analysis.
+    let portal: PortalFrameResult | null = null;
+    if (config.intermediateFrame === 'portal') {
+      const wPortal = LOAD_KPA_ULTIMATE * frameSpacing; // kN/m per horizontal m
+      const areaM2 = (s: { wt: number }) => Math.max(1e-4, (s.wt || 5) / 7850);
+      const colSeed = selPost?.sec ?? sections.posts[0];
+      const rafSeed = selBeam?.sec ?? beamPool[0];
+      if (colSeed && rafSeed) {
+        portal = calcPortalFrame({
+          span: actualSpan,
+          eaveHeight: config.height,
+          pitchDeg: config.pitch,
+          w: wPortal,
+          baseFixity: config.baseFixity,
+          column: { E: colSeed.E, I: colSeed.I, A: areaM2(colSeed) },
+          rafter: { E: rafSeed.E, I: rafSeed.I, A: areaM2(rafSeed) },
+        });
+        const deltaMaxMm = (actualSpan * 1000) / DEFLECT_LIMIT_TOTAL;
+        // Rafter: sized for the governing (knee) moment + apex deflection
+        const portalRafterResults = calcUtilisationCustom(
+          beamPool, config.constructionType,
+          { Mdesign: portal.M_rafterMax, deltaDesign: portal.apexVertDelta, deltaMax: deltaMaxMm, seedI: rafSeed.I },
+          { memberForm: forms.beam }
+        );
+        // Column: knee moment + axial reaction (beam-column interaction)
+        const portalColumnResults = calcUtilisationCustom(
+          sections.posts, config.constructionType,
+          { Mdesign: portal.M_columnMax, deltaDesign: 0, deltaMax: 1e12, seedI: colSeed.I, Naxial: portal.V, bucklingLen: config.height },
+          { memberForm: forms.post }
+        );
+        // Adopt the portal-sized members (respecting any manual override)
+        let pBeam = overrides.beam ? portalRafterResults.find((r) => r.sec.size === overrides.beam) || null : null;
+        if (!pBeam) pBeam = lightestPassingForm(portalRafterResults, forms.beam);
+        if (pBeam) { selBeam = pBeam; beamResults = portalRafterResults; }
+        let pPost = overrides.post ? portalColumnResults.find((r) => r.sec.size === overrides.post) || null : null;
+        if (!pPost) pPost = lightestPassingForm(portalColumnResults, forms.post);
+        if (pPost) { selPost = pPost; postResults = portalColumnResults; }
+      }
+    }
 
     // ── PURLIN ── spans between portal frames
-    const purlinFiltered = filterByForm(sections.rafters, forms.purlin);
     const purlinResults = calcUtilisation(
-      purlinFiltered.length ? purlinFiltered : sections.rafters,
-      frameSpacing, purlinSpacing, config.constructionType,
+      sections.rafters, frameSpacing, purlinSpacing, config.constructionType,
       { isPurlin: true, memberForm: forms.purlin }
     );
     let selPurlin = overrides.purlin ? purlinResults.find((r) => r.sec.size === overrides.purlin) || null : null;
-    if (!selPurlin) selPurlin = lightestPassing(purlinResults);
+    if (!selPurlin) selPurlin = lightestPassingForm(purlinResults, forms.purlin);
 
     // ── LEDGER ── attached to house wall, spans between portal frame rafters
     // The ledger is an outrigger off the house. It spans frame-to-frame.
-    const ledgerFiltered = filterByForm(sections.beams || sections.rafters, forms.ledger);
     const ledgerResults = calcUtilisation(
-      ledgerFiltered.length ? ledgerFiltered : sections.beams || sections.rafters,
-      frameSpacing, purlinSpacing / 2, config.constructionType,
+      beamPool, frameSpacing, purlinSpacing / 2, config.constructionType,
       { memberForm: forms.ledger }
     );
     let selLedger = overrides.ledger ? ledgerResults.find((r) => r.sec.size === overrides.ledger) || null : null;
-    if (!selLedger) selLedger = lightestPassing(ledgerResults);
+    if (!selLedger) selLedger = lightestPassingForm(ledgerResults, forms.ledger);
 
     // ── FASCIA ── outrigger at open gable end, spans between portal frame rafters
     // Same span as ledger — frame-to-frame with standoff brackets
-    const fasciaFiltered = filterByForm(sections.beams || sections.rafters, forms.fascia);
     const fasciaResults = calcUtilisation(
-      fasciaFiltered.length ? fasciaFiltered : sections.beams || sections.rafters,
-      frameSpacing, purlinSpacing / 2, config.constructionType,
+      beamPool, frameSpacing, purlinSpacing / 2, config.constructionType,
       { memberForm: forms.fascia }
     );
     let selFascia = overrides.fascia ? fasciaResults.find((r) => r.sec.size === overrides.fascia) || null : null;
-    if (!selFascia) selFascia = lightestPassing(fasciaResults);
+    if (!selFascia) selFascia = lightestPassingForm(fasciaResults, forms.fascia);
 
     // ── GABLE BOTTOM CHORD ── tie beam in tension; bending only between droppers
     // Effective bending span = dropper spacing ≈ cladding panel width (~927mm).
     // NOT the full gable width — the chord is a tension member, not a beam.
     // Use purlinSpacing as a conservative proxy for dropper spacing.
     const chordBendingSpan = purlinSpacing; // ~1.35m — bending between dropper attachment pts
-    const gableChordFiltered = filterByForm(sections.beams || sections.rafters, forms.gableChord);
     const gableChordResults = calcUtilisation(
-      gableChordFiltered.length ? gableChordFiltered : sections.beams || sections.rafters,
-      chordBendingSpan, frameSpacing / 2, config.constructionType,
+      beamPool, chordBendingSpan, frameSpacing / 2, config.constructionType,
       { memberForm: forms.gableChord }
     );
     let selGableChord = overrides.gableChord ? gableChordResults.find((r) => r.sec.size === overrides.gableChord) || null : null;
-    if (!selGableChord) selGableChord = lightestPassing(gableChordResults);
+    if (!selGableChord) selGableChord = lightestPassingForm(gableChordResults, forms.gableChord);
 
     // ── GABLE DROPPER ── net clear height between rafter bottom face and chord top face
     const dropperHeight = (actualSpan / 2) * Math.tan(config.pitch * Math.PI / 180);
@@ -480,29 +532,25 @@ export default function App() {
     const rafterClear = (selBeam?.sec.d ?? 0) / 1000 / Math.cos(pitchRad);
     const chordClear  = (selGableChord?.sec.d ?? 0) / 1000;
     const netDropperH = Math.max(0.05, dropperHeight - rafterClear - chordClear);
-    const gableDropperFiltered = filterByForm(sections.posts, forms.gableDropper);
     const gableDropperResults = calcUtilisation(
-      gableDropperFiltered.length ? gableDropperFiltered : sections.posts,
-      Math.max(netDropperH, 0.1), frameSpacing, config.constructionType,
+      sections.posts, Math.max(netDropperH, 0.1), frameSpacing, config.constructionType,
       { memberForm: forms.gableDropper }
     );
     let selGableDropper = overrides.gableDropper ? gableDropperResults.find((r) => r.sec.size === overrides.gableDropper) || null : null;
-    if (!selGableDropper) selGableDropper = lightestPassing(gableDropperResults);
+    if (!selGableDropper) selGableDropper = lightestPassingForm(gableDropperResults, forms.gableDropper);
 
     // ── GABLE TOP CHORD (TRUSS) ── rafter sized as compression strut
     // In a tied portal (triangulated), the rafter carries axial compression.
     // Critical buckling length = purlin spacing (purlins provide lateral restraint).
     // Use beam sections db; span = purlinSpacing gives conservative capacity proxy.
-    const gableTopChordFiltered = filterByForm(sections.beams || sections.rafters, forms.gableTopChord);
     const gableTopChordResults = calcUtilisation(
-      gableTopChordFiltered.length ? gableTopChordFiltered : sections.beams || sections.rafters,
-      purlinSpacing, frameSpacing / 2, config.constructionType,
+      beamPool, purlinSpacing, frameSpacing / 2, config.constructionType,
       { memberForm: forms.gableTopChord }
     );
     let selGableTopChord = overrides.gableTopChord
       ? gableTopChordResults.find((r) => r.sec.size === overrides.gableTopChord) || null
       : null;
-    if (!selGableTopChord) selGableTopChord = lightestPassing(gableTopChordResults);
+    if (!selGableTopChord) selGableTopChord = lightestPassingForm(gableTopChordResults, forms.gableTopChord);
 
     // Axial compression in top chord: H = w·L²/(8·h), F = H/cos(θ)
     const roofUDL = 0.6; // kN/m² — conservative DL + LL for truss analysis
@@ -516,6 +564,7 @@ export default function App() {
       selGableChord, selGableDropper, selGableTopChord,
       postSpan, frameSpacing, purlinSpacing, bracingFactor, phi,
       dropperHeight, netDropperH, topChordAxialKN,
+      portal,
     };
   }, [config, forms, overrides, selectedProfile]);
 
@@ -607,7 +656,9 @@ export default function App() {
 
     sheets.push({
       title: 'Full Detail Elevation — Wall (A-A) · Socket Joint (B-B) · Post (C-C)', number: 'S-007',
-      svg: withTitleBlock(generateFullElevationSVG(), titleBlock, 'Full Detail Elevation', 'S-007', 1, 1, 'NTS'),
+      svg: withTitleBlock(generateFullElevationSVG(
+        calc.selBeam?.sec.size ?? undefined, calc.selPost?.sec.size ?? undefined,
+      ), titleBlock, 'Full Detail Elevation', 'S-007', 1, 1, 'NTS'),
       description: 'Three-panel detail elevation per AS1100. Left: dwelling wall at eave with 65×65 SHS standoff. Centre: socket joint — 50×50 stub with packers. Right: corner post base with concrete pad and anchors.',
     });
 
@@ -671,9 +722,18 @@ export default function App() {
   const isPortal = config.constructionType === 'csection' || config.constructionType === 'steel';
   // Form-aware labels
   const formTag = (f: MemberForm) => f === 'rhs' ? 'RHS' : f === 'plate' ? 'C+PLATE' : f === 'b2b' ? 'B2B' : 'C open';
+  const isPortalFrame = config.intermediateFrame === 'portal';
   const purlinLabel = `PURLIN (${formTag(forms.purlin)})`;
-  const postLabel = `COLUMN (${formTag(forms.post)})`;
-  const beamLabel = `${isPortal ? 'RAFTER' : 'BEAM'} (${formTag(forms.beam)})`;
+  const postLabel = `${isPortalFrame ? 'PORTAL COLUMN' : 'COLUMN'} (${formTag(forms.post)})`;
+  const beamLabel = `${isPortalFrame ? 'PORTAL RAFTER' : isPortal ? 'RAFTER' : 'BEAM'} (${formTag(forms.beam)})`;
+
+  // Member-form options offered dynamically from the actual section pool — any
+  // form the DB supports (C / boxed C / B2B / RHS·SHS) is selectable, no caps.
+  const sectionsDB = getSectionDB(config.constructionType);
+  const beamPoolUI = sectionsDB.beams && sectionsDB.beams.length ? sectionsDB.beams : sectionsDB.rafters;
+  const formsPost = formsAvailableIn(sectionsDB.posts);
+  const formsBeam = formsAvailableIn(beamPoolUI);
+  const formsPurlin = formsAvailableIn(sectionsDB.rafters);
 
   // Check for all-fail condition
   const allFail = calc.postResults.length && !calc.selPost?.passed &&
@@ -1202,6 +1262,70 @@ export default function App() {
               </div>
             </div>
 
+            {/* ── Intermediate frame type: tied rafter vs untied portal ── */}
+            <div style={{ marginBottom: 12, border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', background: 'var(--surface2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Intermediate frame</span>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {([['tied-rafter', 'Tied rafter'], ['portal', 'Portal frame']] as const).map(([val, lbl]) => (
+                    <button key={val} onClick={() => updateConfig({ intermediateFrame: val })}
+                      style={{
+                        fontSize: '11px', fontFamily: 'var(--mono)', padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
+                        border: `1px solid ${config.intermediateFrame === val ? '#c9a84c' : 'var(--border)'}`,
+                        background: config.intermediateFrame === val ? 'rgba(201,168,76,0.15)' : 'transparent',
+                        color: config.intermediateFrame === val ? '#c9a84c' : 'var(--text-muted)', fontWeight: config.intermediateFrame === val ? 700 : 400,
+                      }}>{lbl}</button>
+                  ))}
+                </div>
+                {isPortalFrame && (
+                  <>
+                    <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginLeft: 8 }}>Base</span>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {([['pinned', 'Pinned'], ['fixed', 'Fixed']] as const).map(([val, lbl]) => (
+                        <button key={val} onClick={() => updateConfig({ baseFixity: val })}
+                          style={{
+                            fontSize: '11px', fontFamily: 'var(--mono)', padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
+                            border: `1px solid ${config.baseFixity === val ? '#2196f3' : 'var(--border)'}`,
+                            background: config.baseFixity === val ? 'rgba(33,150,243,0.15)' : 'transparent',
+                            color: config.baseFixity === val ? '#2196f3' : 'var(--text-muted)', fontWeight: config.baseFixity === val ? 700 : 400,
+                          }}>{lbl}</button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 10 }}>
+                {isPortalFrame ? (
+                  <><strong style={{ color: 'var(--text)' }}>Portal frame —</strong> columns and rafters are rigidly connected at the knees with no bottom chord. The frame resists spread by bending: a hogging knee moment develops, runs down the columns, and the base takes horizontal thrust. The columns carry real moment and the frame can sway. Sized from a frame analysis, not a simple span.</>
+                ) : (
+                  <><strong style={{ color: 'var(--text)' }}>Tied rafter —</strong> rafters are tied at the bottom by a chord (truss). The tie carries the horizontal thrust as tension; the rafters act as top chords in compression and the columns stay essentially axial. No spread at the base.</>
+                )}
+              </div>
+
+              {isPortalFrame && calc.portal && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px,1fr))', gap: 8, marginTop: 12 }}>
+                  {[
+                    { label: 'Knee moment', value: `${calc.portal.M_knee.toFixed(1)} kNm`, color: '#f44336' },
+                    { label: 'Column moment', value: `${calc.portal.M_columnMax.toFixed(1)} kNm`, color: '#ff9800' },
+                    { label: 'Base thrust (spread)', value: `${calc.portal.H.toFixed(1)} kN`, color: '#2196f3' },
+                    { label: 'Apex deflection', value: `${calc.portal.apexVertDelta.toFixed(0)} mm`, color: '#9aa' },
+                    ...(config.baseFixity === 'fixed' ? [{ label: 'Base moment', value: `${calc.portal.M_base.toFixed(1)} kNm`, color: '#ff9800' }] : []),
+                  ].map(({ label, value, color }) => (
+                    <div key={label} style={{ background: 'var(--surface)', borderRadius: 6, padding: '8px 10px', border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', marginBottom: 4 }}>{label}</div>
+                      <div style={{ fontSize: '14px', fontFamily: 'var(--mono)', fontWeight: 700, color }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {isPortalFrame && calc.portal && (
+                <div style={{ fontSize: '9px', color: '#c9a84c', marginTop: 8, fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
+                  ⚠ Footing/base must resist {calc.portal.H.toFixed(1)} kN horizontal thrust{config.baseFixity === 'fixed' ? ` + ${calc.portal.M_base.toFixed(1)} kNm base moment` : ' (pinned base — provide drag/brace or slab tie)'}. Frame carries roof load over {calc.frameSpacing.toFixed(2)} m tributary.
+                </div>
+              )}
+            </div>
+
             {allFail && (
               <div className="alert-error">
                 <strong>Structural engineer required.</strong> No standard sections pass for this span/loading. Engineer to specify custom section.
@@ -1220,7 +1344,7 @@ export default function App() {
                 result={calc.selPost}
                 dropdown={buildDropdown('post', calc.postResults, calc.selPost)}
                 onFormChange={(f) => updateForm('post', f)}
-                availableForms={getAvailableForms('post')}
+                availableForms={formsPost}
                 currentForm={forms.post}
               />
               <MemberCard
@@ -1229,7 +1353,7 @@ export default function App() {
                 result={calc.selBeam}
                 dropdown={buildDropdown('beam', calc.beamResults, calc.selBeam)}
                 onFormChange={(f) => updateForm('beam', f)}
-                availableForms={getAvailableForms('beam')}
+                availableForms={formsBeam}
                 currentForm={forms.beam}
               />
               <MemberCard
@@ -1238,7 +1362,7 @@ export default function App() {
                 result={calc.selPurlin}
                 dropdown={buildDropdown('purlin', calc.purlinResults, calc.selPurlin)}
                 onFormChange={(f) => updateForm('purlin', f)}
-                availableForms={getAvailableForms('purlin')}
+                availableForms={formsPurlin}
                 currentForm={forms.purlin}
               />
               <MemberCard
@@ -1247,7 +1371,7 @@ export default function App() {
                 result={calc.selLedger}
                 dropdown={buildDropdown('ledger', calc.ledgerResults, calc.selLedger)}
                 onFormChange={(f) => updateForm('ledger', f)}
-                availableForms={getAvailableForms('ledger')}
+                availableForms={formsBeam}
                 currentForm={forms.ledger}
               />
               <MemberCard
@@ -1256,7 +1380,7 @@ export default function App() {
                 result={calc.selFascia}
                 dropdown={buildDropdown('fascia', calc.fasciaResults, calc.selFascia)}
                 onFormChange={(f) => updateForm('fascia', f)}
-                availableForms={getAvailableForms('fascia')}
+                availableForms={formsBeam}
                 currentForm={forms.fascia}
               />
             </div>
@@ -1313,7 +1437,7 @@ export default function App() {
                       result={calc.selGableTopChord}
                       dropdown={buildDropdown('gableTopChord', calc.gableTopChordResults, calc.selGableTopChord)}
                       onFormChange={(f) => updateForm('gableTopChord', f)}
-                      availableForms={getAvailableForms('gableTopChord')}
+                      availableForms={formsBeam}
                       currentForm={forms.gableTopChord}
                     />
                   </div>
@@ -1327,7 +1451,7 @@ export default function App() {
                       result={calc.selGableChord}
                       dropdown={buildDropdown('gableChord', calc.gableChordResults, calc.selGableChord)}
                       onFormChange={(f) => updateForm('gableChord', f)}
-                      availableForms={getAvailableForms('gableChord')}
+                      availableForms={formsBeam}
                       currentForm={forms.gableChord}
                     />
                   </div>
@@ -1341,7 +1465,7 @@ export default function App() {
                       result={calc.selGableDropper}
                       dropdown={buildDropdown('gableDropper', calc.gableDropperResults, calc.selGableDropper)}
                       onFormChange={(f) => updateForm('gableDropper', f)}
-                      availableForms={getAvailableForms('gableDropper')}
+                      availableForms={formsPost}
                       currentForm={forms.gableDropper}
                     />
                   </div>
@@ -1631,7 +1755,7 @@ export default function App() {
                 <label className="config-label">Socket Joint — Rafter to 65×65 Standoff (no visible end plate)</label>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '6px', padding: '6px', border: '1px solid var(--border2)' }}>
-                    <div dangerouslySetInnerHTML={{ __html: generateSocketJointSVG() }} />
+                    <div dangerouslySetInnerHTML={{ __html: generateSocketJointSVG(calc.selBeam?.sec.size ?? undefined) }} />
                   </div>
                   <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', lineHeight: 1.7, padding: '8px' }}>
                     <div style={{ color: 'var(--accent)', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>How It Works</div>
@@ -1639,7 +1763,7 @@ export default function App() {
                     <div>• 50×50 SHS stub welded to top face at each rafter</div>
                     <div>• 50×5mm packer plates welded both faces of 50×50</div>
                     <div>• Packers bring 50×50 out to 60mm (C-section internal)</div>
-                    <div>• Rafter (C250×65) slips over from above</div>
+                    <div>• Rafter ({calc.selBeam?.sec.size ?? 'C250×65'}) slips over from above</div>
                     <div>• 4× M10 FHCS per side into tapped 50×50</div>
                     <div style={{ marginTop: 8, color: 'var(--text-subtle)' }}>
                       Result: zero visible plates, just clean

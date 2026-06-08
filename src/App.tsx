@@ -31,6 +31,7 @@ import { parseHandoff } from '@/lib/handoffSchema';
 import { checkAsDesigned, summarise } from '@/lib/compliance';
 import { normalizeOverlays, getOverlayGuidance, type NormalizedOverlay } from '@/lib/overlays';
 import type { ExportSheet } from '@/lib/exportPdf';
+import { downloadDesignSet } from '@/lib/designSetExport';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -846,6 +847,18 @@ export default function App() {
       setIsExporting(false);
     }
   }, [submissionSheets, titleBlock.projectName]);
+
+  // Hand the design over to Drafting as a .designset.json (the shared contract).
+  const handleExportDesignSet = useCallback(() => {
+    try {
+      downloadDesignSet({
+        config, calc, titleBlock, standoff, leftSetback, rightSetback,
+        northRotation, cladding: selectedCladding, schedule: materialSchedule, ratePerKg,
+      });
+    } catch (err) {
+      alert('DesignSet export failed: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  }, [config, calc, titleBlock, standoff, leftSetback, rightSetback, northRotation, selectedCladding, materialSchedule, ratePerKg]);
 
   // ── Gable infill calculation ──
   const gableInfill = useMemo(() => {
@@ -1998,6 +2011,22 @@ export default function App() {
                   style={{ fontSize: '12px', padding: '10px 20px', background: 'var(--accent)', color: '#111210', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: isExporting ? 'wait' : 'pointer', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', opacity: isExporting ? 0.6 : 1 }}
                 >
                   {isExporting ? 'Generating…' : '⤓ Generate Submission PDF'}
+                </button>
+              </div>
+
+              {/* Hand the design to Drafting as a DesignSet */}
+              <div className="config-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <label className="config-label" style={{ marginBottom: 2 }}>Design Data → Drafting</label>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)' }}>
+                    Hand the design over as a .designset.json — geometry, sections + checks, schedule and title block. Open it in Drafting to generate & finalise the drawings.
+                  </div>
+                </div>
+                <button
+                  onClick={handleExportDesignSet}
+                  style={{ fontSize: '12px', padding: '10px 20px', background: 'transparent', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--mono)', whiteSpace: 'nowrap' }}
+                >
+                  ⚙ Export DesignSet
                 </button>
               </div>
 

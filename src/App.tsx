@@ -32,6 +32,7 @@ import { checkAsDesigned, summarise } from '@/lib/compliance';
 import { normalizeOverlays, getOverlayGuidance, type NormalizedOverlay } from '@/lib/overlays';
 import type { ExportSheet } from '@/lib/exportPdf';
 import { downloadDesignSet } from '@/lib/designSetExport';
+import { readDesignSetForReview } from '@/lib/designSetReview';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -859,6 +860,32 @@ export default function App() {
       alert('DesignSet export failed: ' + (err instanceof Error ? err.message : String(err)));
     }
   }, [config, calc, titleBlock, standoff, leftSetback, rightSetback, northRotation, selectedCladding, materialSchedule, ratePerKg]);
+
+  // Import a Drafting handback: load its geometry + sections into the inputs so
+  // the calc engine re-runs and re-checks the returned design.
+  const handleImportDesignSet = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = '.json,.designset';
+    input.onchange = async () => {
+      const file = input.files?.[0]; if (!file) return;
+      try {
+        const r = readDesignSetForReview(await file.text());
+        updateConfig(r.config);
+        setOverrides(prev => ({ ...prev, ...r.overrides }));
+        updateTB(r.titleBlock);
+        setNorthRotation(r.northRotation);
+        const fails = r.ds.members.filter(m => m.check && !m.check.pass).length;
+        alert(
+          `Loaded "${r.ds.project.projectName || 'design'}" for review.\n` +
+          `Calcs are re-running — review the member checks, then generate the calc PDF.` +
+          (fails ? `\n(${fails} member(s) were flagged failing in the handback.)` : ''),
+        );
+      } catch (err) {
+        alert('Import for review failed: ' + (err instanceof Error ? err.message : String(err)));
+      }
+    };
+    input.click();
+  }, [updateConfig, updateTB]);
 
   // ── Gable infill calculation ──
   const gableInfill = useMemo(() => {
@@ -2027,6 +2054,22 @@ export default function App() {
                   style={{ fontSize: '12px', padding: '10px 20px', background: 'transparent', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--mono)', whiteSpace: 'nowrap' }}
                 >
                   ⚙ Export DesignSet
+                </button>
+              </div>
+
+              {/* Review a Drafting handback — re-runs the calcs on the returned design */}
+              <div className="config-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <label className="config-label" style={{ marginBottom: 2 }}>Review Drafting Handback</label>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)' }}>
+                    Load a .designset.json returned from Drafting — its geometry & sections drop into the inputs and the calcs re-run so you can re-check and issue the calc PDF.
+                  </div>
+                </div>
+                <button
+                  onClick={handleImportDesignSet}
+                  style={{ fontSize: '12px', padding: '10px 20px', background: 'transparent', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--mono)', whiteSpace: 'nowrap' }}
+                >
+                  ↩ Import for Review
                 </button>
               </div>
 

@@ -50,6 +50,7 @@ export interface DesignSetSource {
   // and the measured offsets as the provisional build line, plus height/coverage.
   planning?: {
     requiredSetbacks?: { front?: number; side?: number; rear?: number };
+    requiredSetbacksEstimated?: boolean;   // required setbacks are estimates → provisional
     provisionalSetbacks?: { front?: number; rear?: number; left?: number; right?: number };
     maxHeight?: number;
     siteCoverage?: number;

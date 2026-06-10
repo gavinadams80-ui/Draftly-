@@ -18,6 +18,9 @@ export interface AsDesignedInputs {
   maxHeight?: number;          // m — allowed (research.max_height)
   designedRidge?: number;      // m — as-designed highest point
   requiredSetbacks?: { front?: number; side?: number; rear?: number };
+  // True when requiredSetbacks are estimates (Reg 79/doc-derived, not gov-verified) —
+  // checked against, but labelled estimated and noted "confirm with surveyor".
+  requiredEstimated?: boolean;
   // Provisional build line carried from siting (the measured offsets), used when a
   // confirmed council setback is missing. Per-side so left/right can differ.
   provisionalSetbacks?: { front?: number; rear?: number; left?: number; right?: number };
@@ -69,6 +72,9 @@ export function checkAsDesigned(i: AsDesignedInputs): ComplianceCheck[] {
   const setbackRow = (label: string, confirmedReq?: number, provReq?: number, offset?: number, growth = 0) => {
     const required = confirmedReq ?? provReq;
     const provisional = confirmedReq === undefined && provReq !== undefined;
+    // Estimated = a real (Reg 79/doc) required number, but not gov-verified — check
+    // against it, yet label it estimated and don't bank a confirmed pass on it.
+    const estimated = confirmedReq !== undefined && i.requiredEstimated === true;
     if (required === undefined && offset === undefined) return;
     const actual = offset !== undefined ? offset - growth : undefined;
     let pass: boolean | null;
@@ -81,6 +87,11 @@ export function checkAsDesigned(i: AsDesignedInputs): ComplianceCheck[] {
         pass = ok ? null : false;
         note = ok ? 'provisional — within sited build line'
                   : `${(-margin).toFixed(2)} m past provisional line — re-confirm siting`;
+      } else if (estimated) {
+        // Meets the estimated minimum → neutral (not a confirmed green); short → flag.
+        pass = ok ? null : false;
+        note = ok ? `${margin.toFixed(2)} m clearance · estimated, confirm with surveyor`
+                  : `${(-margin).toFixed(2)} m short of estimated setback — confirm with surveyor`;
       } else {
         pass = ok;
         note = margin >= 0 ? `${margin.toFixed(2)} m clearance` : `${(-margin).toFixed(2)} m short`;
@@ -88,13 +99,17 @@ export function checkAsDesigned(i: AsDesignedInputs): ComplianceCheck[] {
     } else {
       pass = null;
     }
+    const tag = provisional ? ' (provisional)' : estimated ? ' (estimated)' : '';
+    const reqTag = provisional ? ' (prov.)' : estimated ? ' (est.)' : '';
     checks.push({
-      label: provisional ? `${label} setback (provisional)` : `${label} setback`,
-      required: required !== undefined ? `≥ ${m1(required)}${provisional ? ' (prov.)' : ''}` : '—',
+      label: `${label} setback${tag}`,
+      required: required !== undefined ? `≥ ${m1(required)}${reqTag}` : '—',
       actual: m(actual),
       pass,
       rule: provisional
         ? `Provisional build line carried from siting — the council setback isn't confirmed. The structure must not grow past where it was sited; confirm the planning setback before submission.`
+        : estimated
+        ? `Estimated planning setback (VIC Building Reg 79 / document-derived, not government-verified). Treated as a provisional sum — confirm the figure with a surveyor before submission.`
         : `The measured distance from the structure to the ${label.toLowerCase()} boundary must be at least the required planning setback.`,
       note,
     });

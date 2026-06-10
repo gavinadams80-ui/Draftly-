@@ -128,6 +128,7 @@ export const HandoffSchema = z.object({
     max_height: numish,        // m — allowed building height
     site_coverage: numish,     // % — max site coverage
     setbacks: SetbacksSchema.optional(),  // required planning setbacks
+    setbacks_estimated: z.boolean().optional(),  // true = estimated (Reg 79/doc), not gov-verified → provisional
     overlays: z.array(OverlaySchema).optional(),
     confidence: z.string().optional(),
     source_url: z.string().optional(),

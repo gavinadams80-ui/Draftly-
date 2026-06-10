@@ -227,6 +227,7 @@ interface SiteConstraints {
   council?: string;
   maxHeight?: number;   // metres
   setbacks?: { front?: number; side?: number; rear?: number };   // required (planning)
+  setbacksEstimated?: boolean;   // true = the above are estimates (Reg 79/doc), not gov-verified
   offsets?: { front?: number; rear?: number; left?: number; right?: number }; // actual measured
   siteCoverage?: number; // %
   siteAreaM2?: number;   // lot area from siting tool
@@ -474,6 +475,7 @@ export default function App() {
         council: r.council,
         maxHeight: r.max_height,
         setbacks: r.setbacks ? { front: r.setbacks.front, side: r.setbacks.side, rear: r.setbacks.rear } : undefined,
+        setbacksEstimated: r.setbacks_estimated,
         offsets: o ? { front: o.front, rear: o.rear, left: o.left, right: o.right } : undefined,
         siteCoverage: r.site_coverage,
         siteAreaM2: payload.boundaries?.site?.areaM2 ?? undefined,
@@ -551,6 +553,7 @@ export default function App() {
       maxHeight: siteConstraints.maxHeight,
       designedRidge,
       requiredSetbacks: siteConstraints.setbacks,
+      requiredEstimated: siteConstraints.setbacksEstimated,  // estimates → note as provisional
       provisionalSetbacks: siteConstraints.offsets,  // measured offsets = provisional build line
       actualOffsets: siteConstraints.offsets,
       widthGrowth,
@@ -960,6 +963,7 @@ export default function App() {
         notes: siteConstraints?.notes,
         planning: siteConstraints ? {
           requiredSetbacks: siteConstraints.setbacks,
+          requiredSetbacksEstimated: siteConstraints.setbacksEstimated,
           provisionalSetbacks: siteConstraints.offsets,
           maxHeight: siteConstraints.maxHeight,
           siteCoverage: siteConstraints.siteCoverage,

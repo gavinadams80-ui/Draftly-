@@ -188,13 +188,23 @@ export const HandoffSchema = z.object({
     missingCount: z.number().optional(),
     infoCount: z.number().optional(),
     bal: z.string().nullable().optional(),
-    floodRisk: z.string().optional(),
+    floodRisk: z.string().nullable().optional(),
     checkedAt: z.string().optional(),
     approvedAt: z.string().optional(),
   }).partial().optional(),
 
   // v1.4.0 curated handoff — preferred over the loose fields above when present.
   engineeringPackage: EngineeringPackageSchema.optional(),
+
+  // Submission/applicant details — the home owner goes on the drawings' title block.
+  submission: z.object({
+    applicant: z.object({
+      name: z.string().optional(),
+      email: z.string().optional(),
+      phone: z.string().optional(),
+      address: z.string().optional(),
+    }).partial().optional(),
+  }).partial().optional(),
 
   status: z.string().optional(),
   version: z.string().optional(),

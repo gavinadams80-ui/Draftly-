@@ -46,6 +46,17 @@ export interface DesignSetSource {
   // Free-text planning notes the user typed in Intelligence — passed through so
   // Drafting sees them and can answer them on the drawings.
   notes?: string;
+  // Planning setbacks brought forward: the council-required ones (when confirmed)
+  // and the measured offsets as the provisional build line, plus height/coverage.
+  planning?: {
+    requiredSetbacks?: { front?: number; side?: number; rear?: number };
+    provisionalSetbacks?: { front?: number; rear?: number; left?: number; right?: number };
+    maxHeight?: number;
+    siteCoverage?: number;
+  };
+  // Roof/pitch direction + which sides fix to the dwelling — for the site plan.
+  ridgeBearing?: number;  // deg
+  connection?: { sides?: Record<string, boolean>; lengths?: Record<string, number | null> };
 }
 
 function member(id: string, role: string, sel: Sel): DesignMember | null {
@@ -109,6 +120,9 @@ export function buildDesignSetJSON(src: DesignSetSource): string {
           },
         } : {}),
         ...(src.notes ? { siteNotes: src.notes } : {}),
+        ...(src.planning ? { planning: src.planning } : {}),
+        ...(src.ridgeBearing !== undefined ? { ridgeBearing: src.ridgeBearing } : {}),
+        ...(src.connection ? { connection: src.connection } : {}),
       },
       loads: { windUltimateKpa: c.windPressureKpa },
       schedule: {

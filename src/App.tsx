@@ -247,6 +247,12 @@ interface SiteConstraints {
   // width/depth grows past it, the structure encroaches on the provisional build line.
   sitedWidth?: number;
   sitedDepth?: number;
+  // Roof/pitch direction + how the structure attaches to the dwelling, and the
+  // aerial underlay — carried for the site plan + forwarded to Drafting.
+  ridgeBearing?: number;                              // deg — ridge line direction
+  connectionSides?: Record<string, boolean>;          // which sides fix to the dwelling
+  connectionLengths?: Record<string, number | null>;  // connection length per side (m)
+  aerial?: { imageBase64?: string; url?: string; bbox?: number[] };
   // Stormwater sizing carried from siting → for Drafting's drainage sheet.
   stormwater?: {
     designIntensityMmHr?: number;
@@ -380,6 +386,10 @@ export default function App() {
       const standoffMm = epa?.frameStandoffMm ?? b.frameStandoffMm;
       const overhangMm = epa?.existingGutterOverhangMm ?? b.existingGutterOverhangMm;
       const stormwater = ep?.stormwater ?? payload.boundaries?.stormwater;
+      // Roof/pitch direction, how it connects to the dwelling, and the aerial underlay.
+      const ridgeBearing = payload.boundaries?.ridgeBearing ?? payload.boundaries?.ridge?.bearing ?? undefined;
+      const connDetail = payload.boundaries?.attachmentDetail;
+      const aerial = payload.boundaries?.site?.aerial;
 
       // Pre-fill dimensions (validator already coerced to numbers)
       const patch: Partial<ProjectConfig> = {};
@@ -419,12 +429,14 @@ export default function App() {
       // (siteConstraints.offsets, used by the compliance re-check); the wall setbacks stay
       // a design decision (left full / right 1800 per the brief). Do not overwrite them here.
 
-      // Pre-fill title block with site address + council
-      if (s.fullAddress || r.council) {
+      // Pre-fill title block with site address + council + home owner (goes on the plans)
+      const owner = payload.submission?.applicant?.name;
+      if (s.fullAddress || r.council || owner) {
         updateTB({
           projectName: s.fullAddress ?? '',
           propertyAddress: s.fullAddress ?? '',
           council: r.council ?? '',
+          ...(owner ? { clientName: owner } : {}),
           date: new Date().toLocaleDateString('en-AU'),
         });
       }
@@ -476,6 +488,10 @@ export default function App() {
         sitedWidth: width,
         sitedDepth: depth,
         stormwater: swSummary,
+        ridgeBearing: typeof ridgeBearing === 'number' ? ridgeBearing : undefined,
+        connectionSides: connDetail?.sides,
+        connectionLengths: connDetail?.lengths,
+        aerial: aerial,
         lotPts: payload.boundaries?.site?.lotPts,
         footprint: payload.boundaries?.building?.footprint,
         frontBoundaryIndex: payload.boundaries?.site?.frontBoundaryIndex,
@@ -942,6 +958,17 @@ export default function App() {
         gutterOverhang: siteConstraints?.existingGutterOverhangMm,
         drainage: siteConstraints?.stormwater,
         notes: siteConstraints?.notes,
+        planning: siteConstraints ? {
+          requiredSetbacks: siteConstraints.setbacks,
+          provisionalSetbacks: siteConstraints.offsets,
+          maxHeight: siteConstraints.maxHeight,
+          siteCoverage: siteConstraints.siteCoverage,
+        } : undefined,
+        ridgeBearing: siteConstraints?.ridgeBearing,
+        connection: siteConstraints ? {
+          sides: siteConstraints.connectionSides,
+          lengths: siteConstraints.connectionLengths,
+        } : undefined,
       });
     } catch (err) {
       alert('DesignSet export failed: ' + (err instanceof Error ? err.message : String(err)));

@@ -241,6 +241,16 @@ interface SiteConstraints {
   gutterHeight?: number;  // m — top of gutter / eave line
   fasciaHeight?: number;  // m — bottom of fascia
   ridgeHeight?: number;   // m — ridge / highest point
+  existingGutterOverhangMm?: number;  // mm — overhang of the existing dwelling gutter (wall-section set-out)
+  frameStandoffMm?: number;           // mm — frame standoff from the dwelling (also applied to the standoff input)
+  // Stormwater sizing carried from siting → for Drafting's drainage sheet.
+  stormwater?: {
+    designIntensityMmHr?: number;
+    aepPercent?: number;
+    totalCatchmentAreaM2?: number;
+    anyOverCapacity?: boolean;
+    downpipes?: { label?: string; capacityLs?: number; servesM2?: number }[];
+  };
   importedCompliance?: { approved?: boolean; passCount?: number; totalChecks?: number };
   // Site-plan geometry (drawn by Engineering; sent by Intelligence)
   lotPts?: LatLng[];
@@ -352,31 +362,52 @@ export default function App() {
         return;
       }
       const payload = parsed.data;
+      const ep = payload.engineeringPackage;        // v1.4.0 curated handoff (preferred source)
+      const eps = ep?.structure;
+      const epa = ep?.attachment;
       const b = payload.boundaries?.building ?? {};
       const r = payload.research ?? {};
       const s = payload.site ?? {};
-      const o = payload.boundaries?.offsets;
+      // Measured setbacks + carried set-out: prefer the engineeringPackage, fall back to loose fields.
+      const o = ep?.setbacks ?? payload.boundaries?.offsets;
+      const gutterH = eps?.gutterHeightM ?? b.gutterHeight;
+      const fasciaH = eps?.fasciaHeightM ?? b.fasciaHeight;
+      const ridgeH  = eps?.ridgeHeightM  ?? b.ridgeHeight;
+      const standoffMm = epa?.frameStandoffMm ?? b.frameStandoffMm;
+      const overhangMm = epa?.existingGutterOverhangMm ?? b.existingGutterOverhangMm;
+      const stormwater = ep?.stormwater ?? payload.boundaries?.stormwater;
 
-      // Pre-fill dimensions from building footprint (validator already coerced to numbers)
+      // Pre-fill dimensions (validator already coerced to numbers)
       const patch: Partial<ProjectConfig> = {};
-      if (b.width !== undefined) patch.width = b.width;
-      if (b.depth !== undefined) patch.depth = b.depth;
-      if (b.height !== undefined) patch.height = b.height;
+      const width = eps?.widthM ?? b.width;
+      const depth = eps?.depthM ?? b.depth;
+      if (width !== undefined) patch.width = width;
+      if (depth !== undefined) patch.depth = depth;
 
       // Map project type
       const rawType = (s.projectType ?? '').toLowerCase();
       const mappedType = PROJECT_TYPE_MAP[rawType];
       if (mappedType) patch.buildingType = mappedType;
 
-      // Attachment type from siting tool
-      const att = payload.boundaries?.attachment;
+      // Attachment type — prefer the curated package, then the siting tool.
+      const att = epa?.type ?? payload.boundaries?.attachment;
       if (att === 'freestanding' || att === 'attached' || att === 'three-side') {
         patch.attachment = att as AttachmentType;
       }
 
-      // Pitch and eave height from siting tool
-      if (b.pitch !== undefined)        patch.pitch  = b.pitch;
-      if (b.gutterHeight !== undefined) patch.height = b.gutterHeight;
+      // Roof type from the data (previously left at the default — wrong if not a gable).
+      const rawRoof = (eps?.roofType ?? b.roofType ?? '').toLowerCase();
+      if (['gable', 'skillion', 'flat', 'hip', 'open'].includes(rawRoof)) {
+        patch.roofType = rawRoof as ProjectConfig['roofType'];
+      }
+
+      // Pitch + engineered eave height (= the gutter line).
+      const pitch = eps?.pitchDeg ?? b.pitch;
+      if (pitch !== undefined)   patch.pitch  = pitch;
+      if (gutterH !== undefined) patch.height = gutterH;
+
+      // Frame standoff from the siting tool (was stuck at the 150mm default).
+      if (standoffMm !== undefined) setStandoff(standoffMm);
 
       // Drive plan-drawing wall setbacks from the ACTUAL measured offsets (left/right
       // are the side flanks). Previously these were ignored and hand-typed.
@@ -400,8 +431,26 @@ export default function App() {
       setConfig(prev => ({ ...prev, ...patch }));
       setOverrides({ post: null, beam: null, purlin: null, ledger: null, fascia: null, gableChord: null, gableDropper: null, gableTopChord: null } as MemberOverrides);
 
-      // Store site constraints — including the offsets and Intelligence's own
-      // compliance verdict, which are carried through (no longer dropped).
+      // Compliance: v1.4.0 sends counts (pass/fail/missing) instead of totalChecks.
+      // Derive the denominator so the badge stops reading "6/undefined".
+      const comp = payload.compliance;
+      const compTotal = comp
+        ? (comp.totalChecks ?? ((comp.passCount ?? 0) + (comp.failCount ?? 0) + (comp.missingCount ?? 0)))
+        : undefined;
+
+      // Stormwater sizing for Drafting's drainage sheet — keep the numbers, drop the polygons.
+      const swSummary = stormwater ? {
+        designIntensityMmHr: stormwater.designRainfall?.intensityMmHr,
+        aepPercent: stormwater.designRainfall?.aepPercent,
+        totalCatchmentAreaM2: stormwater.totalCatchmentAreaM2,
+        anyOverCapacity: stormwater.anyOverCapacity,
+        downpipes: (stormwater.dischargePoints ?? []).map(d => ({
+          label: d.downpipe ?? undefined, capacityLs: d.downpipeCapacityLs, servesM2: d.servesM2,
+        })),
+      } : undefined;
+
+      // Store site constraints — offsets, Intelligence's compliance verdict, the
+      // carried set-out (heights/standoff/overhang) and stormwater, all carried through.
       setSiteConstraints({
         address: s.fullAddress ?? '',
         zone: r.zone,
@@ -414,16 +463,19 @@ export default function App() {
         overlays: normalizeOverlays(r.overlays),
         confidence: r.confidence,
         notes: r.notes,
-        gutterHeight: b.gutterHeight,
-        fasciaHeight: b.fasciaHeight,
-        ridgeHeight: b.ridgeHeight,
+        gutterHeight: gutterH,
+        fasciaHeight: fasciaH,
+        ridgeHeight: ridgeH,
+        existingGutterOverhangMm: overhangMm,
+        frameStandoffMm: standoffMm,
+        stormwater: swSummary,
         lotPts: payload.boundaries?.site?.lotPts,
         footprint: payload.boundaries?.building?.footprint,
         frontBoundaryIndex: payload.boundaries?.site?.frontBoundaryIndex,
-        importedCompliance: payload.compliance ? {
-          approved: payload.compliance.approved,
-          passCount: payload.compliance.passCount,
-          totalChecks: payload.compliance.totalChecks,
+        importedCompliance: comp ? {
+          approved: comp.approved,
+          passCount: comp.passCount,
+          totalChecks: compTotal,
         } : undefined,
       });
 
@@ -873,6 +925,8 @@ export default function App() {
           fascia: siteConstraints.fasciaHeight,
           ridge: siteConstraints.ridgeHeight,
         } : undefined,
+        gutterOverhang: siteConstraints?.existingGutterOverhangMm,
+        drainage: siteConstraints?.stormwater,
         notes: siteConstraints?.notes,
       });
     } catch (err) {
@@ -1070,6 +1124,18 @@ export default function App() {
             )}
             {siteConstraints.ridgeHeight !== undefined && (
               <Chip label={`Ridge: ${siteConstraints.ridgeHeight}m`} />
+            )}
+            {siteConstraints.frameStandoffMm !== undefined && (
+              <Chip label={`Standoff: ${siteConstraints.frameStandoffMm}mm`} />
+            )}
+            {siteConstraints.existingGutterOverhangMm !== undefined && (
+              <Chip label={`Overhang: ${siteConstraints.existingGutterOverhangMm}mm`} />
+            )}
+            {siteConstraints.stormwater?.downpipes && siteConstraints.stormwater.downpipes.length > 0 && (
+              <Chip
+                label={`Stormwater: ${siteConstraints.stormwater.downpipes.length} × ${siteConstraints.stormwater.downpipes[0].label ?? 'DP'}`}
+                warn={siteConstraints.stormwater.anyOverCapacity}
+              />
             )}
             {siteConstraints.overlays?.map(o => <Chip key={o.name} label={o.name} warn />)}
             {siteConstraints.confidence === 'low' && (

@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 
-export const HANDOFF_VERSION = '1.1.0';
+export const HANDOFF_VERSION = '1.4.0';
 
 // Intelligence emits numbers inconsistently (sometimes "3.5", sometimes 3.5,
 // sometimes ""). Coerce anything number-like to a number, everything else to undefined.
@@ -65,6 +65,53 @@ const OverlayObjectSchema = z.object({
 const OverlaySchema = z.union([z.string(), OverlayObjectSchema]);
 export type HandoffOverlay = z.infer<typeof OverlaySchema>;
 
+// Stormwater set-out the siting tool computes — design rainfall + the downpipes
+// and the catchment they each serve. Carried so Drafting can build the drainage
+// sheet instead of re-deriving it. Catchment polygons are intentionally left out
+// (Drafting redraws them); we keep the sizing numbers.
+const StormwaterSchema = z.object({
+  designRainfall: z.object({
+    intensityMmHr: numish,
+    aepPercent: numish,
+    durationMin: numish,
+    source: z.string().optional(),
+  }).partial().optional(),
+  dischargePoints: z.array(z.object({
+    index: z.number().optional(),
+    downpipe: z.string().nullable().optional(),
+    downpipeCapacityLs: numish,
+    servesM2: numish,
+    maxRoofM2: numish,
+    overCapacity: z.boolean().optional(),
+  }).partial()).optional(),
+  totalCatchmentAreaM2: numish,
+  anyOverCapacity: z.boolean().optional(),
+  notes: z.string().optional(),
+}).partial();
+export type HandoffStormwater = z.infer<typeof StormwaterSchema>;
+
+// v1.4.0: Intelligence emits a curated `engineeringPackage` — the vetted, ready-
+// to-engineer view (a superset of the loose top-level fields). We prefer it when
+// present and fall back to the legacy `boundaries`/`research` fields otherwise.
+const EngineeringPackageSchema = z.object({
+  schemaVersion: z.string().optional(),
+  structure: z.object({
+    widthM: numish, depthM: numish,
+    roofType: z.string().optional(),
+    pitchDeg: numish,
+    gutterHeightM: numish, fasciaHeightM: numish, ridgeHeightM: numish,
+    rotationDeg: numish,
+  }).partial().optional(),
+  attachment: z.object({
+    type: z.string().optional(),
+    existingGutterOverhangMm: numish,
+    frameStandoffMm: numish,
+  }).partial().optional(),
+  setbacks: OffsetsSchema.optional(),
+  stormwater: StormwaterSchema.optional(),
+  ready: z.boolean().optional(),
+}).partial();
+
 export const HandoffSchema = z.object({
   site: z.object({
     fullAddress: z.string().optional(),
@@ -108,6 +155,9 @@ export const HandoffSchema = z.object({
       height: numish,          // highest point (ridge, for compliance)
       footprint: z.array(LatLngSchema).optional(),  // placed corners (exact site-plan position)
       rotationDeg: numish,                          // clockwise from north
+      roofType: z.string().optional(),              // 'gable' | 'skillion' | ... — drives config.roofType
+      existingGutterOverhangMm: numish,             // overhang of the existing dwelling's gutter (wall-section set-out)
+      frameStandoffMm: numish,                      // new frame's standoff from the dwelling — drives the standoff input
     }).partial().optional(),
     attachment: attachmentish,
     // Rich per-side attachment detail (which sides are fixed to the dwelling + connection
@@ -127,15 +177,24 @@ export const HandoffSchema = z.object({
       bearing: numish,
       lengthM: numish,
     }).partial().optional(),
+    stormwater: StormwaterSchema.optional(),  // downpipes + catchment sizing from the siting tool
   }).partial().optional(),
 
   compliance: z.object({
     approved: z.boolean().optional(),
     passCount: z.number().optional(),
-    totalChecks: z.number().optional(),
+    totalChecks: z.number().optional(),   // legacy (pre-1.4); newer exports send the counts below
+    failCount: z.number().optional(),
+    missingCount: z.number().optional(),
+    infoCount: z.number().optional(),
+    bal: z.string().nullable().optional(),
+    floodRisk: z.string().optional(),
     checkedAt: z.string().optional(),
     approvedAt: z.string().optional(),
   }).partial().optional(),
+
+  // v1.4.0 curated handoff — preferred over the loose fields above when present.
+  engineeringPackage: EngineeringPackageSchema.optional(),
 
   status: z.string().optional(),
   version: z.string().optional(),

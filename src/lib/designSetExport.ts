@@ -33,6 +33,16 @@ export interface DesignSetSource {
   // wall section and auto-size the fascia/gutter from the source data. The
   // engineered eave height is geometry.height; these are the as-sited values.
   heights?: { gutter?: number; fascia?: number; ridge?: number };
+  // Overhang of the existing dwelling gutter (mm) — wall-section set-out for Drafting.
+  gutterOverhang?: number;
+  // Stormwater sizing for Drafting's drainage sheet (carried from siting).
+  drainage?: {
+    designIntensityMmHr?: number;
+    aepPercent?: number;
+    totalCatchmentAreaM2?: number;
+    anyOverCapacity?: boolean;
+    downpipes?: { label?: string; capacityLs?: number; servesM2?: number }[];
+  };
   // Free-text planning notes the user typed in Intelligence — passed through so
   // Drafting sees them and can answer them on the drawings.
   notes?: string;
@@ -83,6 +93,8 @@ export function buildDesignSetJSON(src: DesignSetSource): string {
         gutterHeight: src.heights?.gutter !== undefined ? m(src.heights.gutter) : undefined,
         fasciaHeight: src.heights?.fascia !== undefined ? m(src.heights.fascia) : undefined,
         ridgeHeight: src.heights?.ridge !== undefined ? m(src.heights.ridge) : undefined,
+        ...(src.gutterOverhang !== undefined ? { existingGutterOverhangMm: src.gutterOverhang } : {}),
+        ...(src.drainage ? { drainage: src.drainage } : {}),
         ...(src.notes ? { siteNotes: src.notes } : {}),
       },
       loads: { windUltimateKpa: c.windPressureKpa },

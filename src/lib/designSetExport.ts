@@ -29,6 +29,13 @@ export interface DesignSetSource {
   cladding?: string;
   schedule: { lines: ScheduleLine[]; totalKg: number; totalCost: number };
   ratePerKg: number;
+  // Carried verbatim from Intelligence (metres) so Drafting can dimension the
+  // wall section and auto-size the fascia/gutter from the source data. The
+  // engineered eave height is geometry.height; these are the as-sited values.
+  heights?: { gutter?: number; fascia?: number; ridge?: number };
+  // Free-text planning notes the user typed in Intelligence — passed through so
+  // Drafting sees them and can answer them on the drawings.
+  notes?: string;
 }
 
 function member(id: string, role: string, sel: Sel): DesignMember | null {
@@ -68,7 +75,16 @@ export function buildDesignSetJSON(src: DesignSetSource): string {
         cladding: src.cladding,
       },
       members,
-      results: { purlinSpacing: m(src.calc.purlinSpacing) },
+      results: {
+        purlinSpacing: m(src.calc.purlinSpacing),
+        // Vertical set-out for Drafting's wall section (mm). undefined keys are
+        // dropped by JSON.stringify, so absent source data stays absent.
+        eaveHeight: m(c.height),
+        gutterHeight: src.heights?.gutter !== undefined ? m(src.heights.gutter) : undefined,
+        fasciaHeight: src.heights?.fascia !== undefined ? m(src.heights.fascia) : undefined,
+        ridgeHeight: src.heights?.ridge !== undefined ? m(src.heights.ridge) : undefined,
+        ...(src.notes ? { siteNotes: src.notes } : {}),
+      },
       loads: { windUltimateKpa: c.windPressureKpa },
       schedule: {
         currency: 'AUD',

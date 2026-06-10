@@ -56,7 +56,7 @@ const DEFAULT_CONFIG: ProjectConfig = {
 };
 
 const DEFAULT_FORMS: MemberForms = {
-  post: 'open',
+  post: 'rhs',             // columns default to RHS/SHS — cleaner in a backyard than an open C; C is still selectable
   beam: 'open',
   purlin: 'open',
   ledger: 'open',
@@ -232,6 +232,15 @@ interface SiteConstraints {
   siteAreaM2?: number;   // lot area from siting tool
   overlays?: NormalizedOverlay[];
   confidence?: string;
+  // Free-text planning notes the user typed into Intelligence — carried so they
+  // aren't lost and Drafting can answer them on the wall section.
+  notes?: string;
+  // Building heights from the siting tool (m). The engineer's eave height lives
+  // in config.height; these are carried verbatim so Drafting can dimension the
+  // wall section + auto-size the fascia/gutter from the source data.
+  gutterHeight?: number;  // m — top of gutter / eave line
+  fasciaHeight?: number;  // m — bottom of fascia
+  ridgeHeight?: number;   // m — ridge / highest point
   importedCompliance?: { approved?: boolean; passCount?: number; totalChecks?: number };
   // Site-plan geometry (drawn by Engineering; sent by Intelligence)
   lotPts?: LatLng[];
@@ -404,6 +413,10 @@ export default function App() {
         siteAreaM2: payload.boundaries?.site?.areaM2 ?? undefined,
         overlays: normalizeOverlays(r.overlays),
         confidence: r.confidence,
+        notes: r.notes,
+        gutterHeight: b.gutterHeight,
+        fasciaHeight: b.fasciaHeight,
+        ridgeHeight: b.ridgeHeight,
         lotPts: payload.boundaries?.site?.lotPts,
         footprint: payload.boundaries?.building?.footprint,
         frontBoundaryIndex: payload.boundaries?.site?.frontBoundaryIndex,
@@ -855,11 +868,17 @@ export default function App() {
       downloadDesignSet({
         config, calc, titleBlock, standoff, leftSetback, rightSetback,
         northRotation, cladding: selectedCladding, schedule: materialSchedule, ratePerKg,
+        heights: siteConstraints ? {
+          gutter: siteConstraints.gutterHeight,
+          fascia: siteConstraints.fasciaHeight,
+          ridge: siteConstraints.ridgeHeight,
+        } : undefined,
+        notes: siteConstraints?.notes,
       });
     } catch (err) {
       alert('DesignSet export failed: ' + (err instanceof Error ? err.message : String(err)));
     }
-  }, [config, calc, titleBlock, standoff, leftSetback, rightSetback, northRotation, selectedCladding, materialSchedule, ratePerKg]);
+  }, [config, calc, titleBlock, standoff, leftSetback, rightSetback, northRotation, selectedCladding, materialSchedule, ratePerKg, siteConstraints]);
 
   // Import a Drafting handback: load its geometry + sections into the inputs so
   // the calc engine re-runs and re-checks the returned design.
@@ -1046,6 +1065,12 @@ export default function App() {
             {siteConstraints.siteCoverage !== undefined && (
               <Chip label={`Cov: ${siteConstraints.siteCoverage}%`} />
             )}
+            {siteConstraints.fasciaHeight !== undefined && (
+              <Chip label={`Fascia: ${siteConstraints.fasciaHeight}m`} />
+            )}
+            {siteConstraints.ridgeHeight !== undefined && (
+              <Chip label={`Ridge: ${siteConstraints.ridgeHeight}m`} />
+            )}
             {siteConstraints.overlays?.map(o => <Chip key={o.name} label={o.name} warn />)}
             {siteConstraints.confidence === 'low' && (
               <Chip label="Low confidence" warn />
@@ -1055,6 +1080,15 @@ export default function App() {
               style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: '2px 4px' }}
               title="Dismiss"
             >×</button>
+            {/* Free-text notes the user typed in Intelligence — surfaced full-width so they aren't missed. */}
+            {siteConstraints.notes && (
+              <div style={{ flexBasis: '100%', fontSize: '11px', color: 'var(--text)', borderTop: '1px solid rgba(201,168,76,0.25)', paddingTop: 8, marginTop: 4, lineHeight: 1.5 }}>
+                <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--accent)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: 6 }}>
+                  Intelligence notes
+                </span>
+                {siteConstraints.notes}
+              </div>
+            )}
           </div>
         )}
 

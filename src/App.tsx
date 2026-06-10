@@ -251,6 +251,7 @@ interface SiteConstraints {
   // Roof/pitch direction + how the structure attaches to the dwelling, and the
   // aerial underlay — carried for the site plan + forwarded to Drafting.
   ridgeBearing?: number;                              // deg — ridge line direction
+  rotationDeg?: number;                               // deg — footprint depth-axis bearing (edge 0→1), to resolve the ridge axis
   connectionSides?: Record<string, boolean>;          // which sides fix to the dwelling
   connectionLengths?: Record<string, number | null>;  // connection length per side (m)
   aerial?: { imageBase64?: string; url?: string; bbox?: number[] };
@@ -389,6 +390,9 @@ export default function App() {
       const stormwater = ep?.stormwater ?? payload.boundaries?.stormwater;
       // Roof/pitch direction, how it connects to the dwelling, and the aerial underlay.
       const ridgeBearing = payload.boundaries?.ridgeBearing ?? payload.boundaries?.ridge?.bearing ?? undefined;
+      // Footprint depth-axis bearing (edge 0→1) — paired with the ridge bearing to
+      // resolve whether the ridge runs along the width or the depth.
+      const rotationDeg = b.rotationDeg;
       const connDetail = payload.boundaries?.attachmentDetail;
       const aerial = payload.boundaries?.site?.aerial;
 
@@ -491,6 +495,7 @@ export default function App() {
         sitedDepth: depth,
         stormwater: swSummary,
         ridgeBearing: typeof ridgeBearing === 'number' ? ridgeBearing : undefined,
+        rotationDeg: typeof rotationDeg === 'number' ? rotationDeg : undefined,
         connectionSides: connDetail?.sides,
         connectionLengths: connDetail?.lengths,
         aerial: aerial,
@@ -976,6 +981,7 @@ export default function App() {
           siteCoverage: siteConstraints.siteCoverage,
         } : undefined,
         ridgeBearing: siteConstraints?.ridgeBearing,
+        rotationDeg: siteConstraints?.rotationDeg,
         connection: siteConstraints ? {
           sides: siteConstraints.connectionSides,
           lengths: siteConstraints.connectionLengths,

@@ -816,6 +816,9 @@ export default function App() {
 
     // Site plan — only when Intelligence has sent lot geometry.
     if (siteConstraints?.lotPts && siteConstraints.lotPts.length >= 3) {
+      const aerial = siteConstraints.aerial;
+      const aerialBbox = aerial?.bbox && aerial.bbox.length === 4
+        ? (aerial.bbox as [number, number, number, number]) : undefined;
       const planSvg = generateSitePlanSVG({
         lotPts: siteConstraints.lotPts,
         areaM2: siteConstraints.siteAreaM2,
@@ -825,6 +828,10 @@ export default function App() {
         council: siteConstraints.council,
         buildingWidth: config.width,
         buildingDepth: config.depth,
+        // v0.10.0 overlays — aerial underlay, ridge/pitch direction, dwelling connection sides.
+        ...(aerialBbox ? { aerial: { imageBase64: aerial?.imageBase64, url: aerial?.url, bbox: aerialBbox } } : {}),
+        ...(siteConstraints.ridgeBearing !== undefined ? { ridgeBearing: siteConstraints.ridgeBearing } : {}),
+        ...(siteConstraints.connectionSides ? { attachmentDetail: { sides: siteConstraints.connectionSides } } : {}),
       });
       if (planSvg) {
         sheets.push({

@@ -94,7 +94,20 @@ export function buildDesignSetJSON(src: DesignSetSource): string {
         fasciaHeight: src.heights?.fascia !== undefined ? m(src.heights.fascia) : undefined,
         ridgeHeight: src.heights?.ridge !== undefined ? m(src.heights.ridge) : undefined,
         ...(src.gutterOverhang !== undefined ? { existingGutterOverhangMm: src.gutterOverhang } : {}),
-        ...(src.drainage ? { drainage: src.drainage } : {}),
+        // Conform to the lib's DesignDrainage (required fields) — our carried summary is loose.
+        ...(src.drainage ? {
+          drainage: {
+            designIntensityMmHr: src.drainage.designIntensityMmHr ?? 0,
+            aepPercent: src.drainage.aepPercent ?? 0,
+            totalCatchmentAreaM2: src.drainage.totalCatchmentAreaM2 ?? 0,
+            anyOverCapacity: src.drainage.anyOverCapacity ?? false,
+            downpipes: (src.drainage.downpipes ?? []).map((d, i) => ({
+              label: d.label ?? `DP${i + 1}`,
+              capacityLs: d.capacityLs ?? 0,
+              servesM2: d.servesM2 ?? 0,
+            })),
+          },
+        } : {}),
         ...(src.notes ? { siteNotes: src.notes } : {}),
       },
       loads: { windUltimateKpa: c.windPressureKpa },

@@ -409,10 +409,11 @@ export default function App() {
       // Frame standoff from the siting tool (was stuck at the 150mm default).
       if (standoffMm !== undefined) setStandoff(standoffMm);
 
-      // Drive plan-drawing wall setbacks from the ACTUAL measured offsets (left/right
-      // are the side flanks). Previously these were ignored and hand-typed.
-      if (o?.left  !== undefined) setLeftSetback(o.left);
-      if (o?.right !== undefined) setRightSetback(o.right);
+      // NB: the measured offsets (distance to the property boundary) are NOT the
+      // plan-view wall setbacks (how far the wall cladding stops short of full depth) —
+      // they're different things. The offsets are carried as the provisional build line
+      // (siteConstraints.offsets, used by the compliance re-check); the wall setbacks stay
+      // a design decision (left full / right 1800 per the brief). Do not overwrite them here.
 
       // Pre-fill title block with site address + council
       if (s.fullAddress || r.council) {

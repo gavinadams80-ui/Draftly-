@@ -29,6 +29,35 @@ export interface DesignSetSource {
   cladding?: string;
   schedule: { lines: ScheduleLine[]; totalKg: number; totalCost: number };
   ratePerKg: number;
+  // Carried verbatim from Intelligence (metres) so Drafting can dimension the
+  // wall section and auto-size the fascia/gutter from the source data. The
+  // engineered eave height is geometry.height; these are the as-sited values.
+  heights?: { gutter?: number; fascia?: number; ridge?: number };
+  // Overhang of the existing dwelling gutter (mm) — wall-section set-out for Drafting.
+  gutterOverhang?: number;
+  // Stormwater sizing for Drafting's drainage sheet (carried from siting).
+  drainage?: {
+    designIntensityMmHr?: number;
+    aepPercent?: number;
+    totalCatchmentAreaM2?: number;
+    anyOverCapacity?: boolean;
+    downpipes?: { label?: string; capacityLs?: number; servesM2?: number }[];
+  };
+  // Free-text planning notes the user typed in Intelligence — passed through so
+  // Drafting sees them and can answer them on the drawings.
+  notes?: string;
+  // Planning setbacks brought forward: the council-required ones (when confirmed)
+  // and the measured offsets as the provisional build line, plus height/coverage.
+  planning?: {
+    requiredSetbacks?: { front?: number; side?: number; rear?: number };
+    requiredSetbacksEstimated?: boolean;   // required setbacks are estimates → provisional
+    provisionalSetbacks?: { front?: number; rear?: number; left?: number; right?: number };
+    maxHeight?: number;
+    siteCoverage?: number;
+  };
+  // Roof/pitch direction + which sides fix to the dwelling — for the site plan.
+  ridgeBearing?: number;  // deg
+  connection?: { sides?: Record<string, boolean>; lengths?: Record<string, number | null> };
 }
 
 function member(id: string, role: string, sel: Sel): DesignMember | null {
@@ -68,7 +97,34 @@ export function buildDesignSetJSON(src: DesignSetSource): string {
         cladding: src.cladding,
       },
       members,
-      results: { purlinSpacing: m(src.calc.purlinSpacing) },
+      results: {
+        purlinSpacing: m(src.calc.purlinSpacing),
+        // Vertical set-out for Drafting's wall section (mm). undefined keys are
+        // dropped by JSON.stringify, so absent source data stays absent.
+        eaveHeight: m(c.height),
+        gutterHeight: src.heights?.gutter !== undefined ? m(src.heights.gutter) : undefined,
+        fasciaHeight: src.heights?.fascia !== undefined ? m(src.heights.fascia) : undefined,
+        ridgeHeight: src.heights?.ridge !== undefined ? m(src.heights.ridge) : undefined,
+        ...(src.gutterOverhang !== undefined ? { existingGutterOverhangMm: src.gutterOverhang } : {}),
+        // Conform to the lib's DesignDrainage (required fields) — our carried summary is loose.
+        ...(src.drainage ? {
+          drainage: {
+            designIntensityMmHr: src.drainage.designIntensityMmHr ?? 0,
+            aepPercent: src.drainage.aepPercent ?? 0,
+            totalCatchmentAreaM2: src.drainage.totalCatchmentAreaM2 ?? 0,
+            anyOverCapacity: src.drainage.anyOverCapacity ?? false,
+            downpipes: (src.drainage.downpipes ?? []).map((d, i) => ({
+              label: d.label ?? `DP${i + 1}`,
+              capacityLs: d.capacityLs ?? 0,
+              servesM2: d.servesM2 ?? 0,
+            })),
+          },
+        } : {}),
+        ...(src.notes ? { siteNotes: src.notes } : {}),
+        ...(src.planning ? { planning: src.planning } : {}),
+        ...(src.ridgeBearing !== undefined ? { ridgeBearing: src.ridgeBearing } : {}),
+        ...(src.connection ? { connection: src.connection } : {}),
+      },
       loads: { windUltimateKpa: c.windPressureKpa },
       schedule: {
         currency: 'AUD',

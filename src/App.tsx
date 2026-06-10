@@ -56,7 +56,7 @@ const DEFAULT_CONFIG: ProjectConfig = {
 };
 
 const DEFAULT_FORMS: MemberForms = {
-  post: 'open',
+  post: 'rhs',             // columns default to RHS/SHS — cleaner in a backyard than an open C; C is still selectable
   beam: 'open',
   purlin: 'open',
   ledger: 'open',
@@ -227,11 +227,41 @@ interface SiteConstraints {
   council?: string;
   maxHeight?: number;   // metres
   setbacks?: { front?: number; side?: number; rear?: number };   // required (planning)
+  setbacksEstimated?: boolean;   // true = the above are estimates (Reg 79/doc), not gov-verified
   offsets?: { front?: number; rear?: number; left?: number; right?: number }; // actual measured
   siteCoverage?: number; // %
   siteAreaM2?: number;   // lot area from siting tool
   overlays?: NormalizedOverlay[];
   confidence?: string;
+  // Free-text planning notes the user typed into Intelligence — carried so they
+  // aren't lost and Drafting can answer them on the wall section.
+  notes?: string;
+  // Building heights from the siting tool (m). The engineer's eave height lives
+  // in config.height; these are carried verbatim so Drafting can dimension the
+  // wall section + auto-size the fascia/gutter from the source data.
+  gutterHeight?: number;  // m — top of gutter / eave line
+  fasciaHeight?: number;  // m — bottom of fascia
+  ridgeHeight?: number;   // m — ridge / highest point
+  existingGutterOverhangMm?: number;  // mm — overhang of the existing dwelling gutter (wall-section set-out)
+  frameStandoffMm?: number;           // mm — frame standoff from the dwelling (also applied to the standoff input)
+  // As-sited footprint (m) — the offsets were measured for this. If the engineered
+  // width/depth grows past it, the structure encroaches on the provisional build line.
+  sitedWidth?: number;
+  sitedDepth?: number;
+  // Roof/pitch direction + how the structure attaches to the dwelling, and the
+  // aerial underlay — carried for the site plan + forwarded to Drafting.
+  ridgeBearing?: number;                              // deg — ridge line direction
+  connectionSides?: Record<string, boolean>;          // which sides fix to the dwelling
+  connectionLengths?: Record<string, number | null>;  // connection length per side (m)
+  aerial?: { imageBase64?: string; url?: string; bbox?: number[] };
+  // Stormwater sizing carried from siting → for Drafting's drainage sheet.
+  stormwater?: {
+    designIntensityMmHr?: number;
+    aepPercent?: number;
+    totalCatchmentAreaM2?: number;
+    anyOverCapacity?: boolean;
+    downpipes?: { label?: string; capacityLs?: number; servesM2?: number }[];
+  };
   importedCompliance?: { approved?: boolean; passCount?: number; totalChecks?: number };
   // Site-plan geometry (drawn by Engineering; sent by Intelligence)
   lotPts?: LatLng[];
@@ -343,43 +373,71 @@ export default function App() {
         return;
       }
       const payload = parsed.data;
+      const ep = payload.engineeringPackage;        // v1.4.0 curated handoff (preferred source)
+      const eps = ep?.structure;
+      const epa = ep?.attachment;
       const b = payload.boundaries?.building ?? {};
       const r = payload.research ?? {};
       const s = payload.site ?? {};
-      const o = payload.boundaries?.offsets;
+      // Measured setbacks + carried set-out: prefer the engineeringPackage, fall back to loose fields.
+      const o = ep?.setbacks ?? payload.boundaries?.offsets;
+      const gutterH = eps?.gutterHeightM ?? b.gutterHeight;
+      const fasciaH = eps?.fasciaHeightM ?? b.fasciaHeight;
+      const ridgeH  = eps?.ridgeHeightM  ?? b.ridgeHeight;
+      const standoffMm = epa?.frameStandoffMm ?? b.frameStandoffMm;
+      const overhangMm = epa?.existingGutterOverhangMm ?? b.existingGutterOverhangMm;
+      const stormwater = ep?.stormwater ?? payload.boundaries?.stormwater;
+      // Roof/pitch direction, how it connects to the dwelling, and the aerial underlay.
+      const ridgeBearing = payload.boundaries?.ridgeBearing ?? payload.boundaries?.ridge?.bearing ?? undefined;
+      const connDetail = payload.boundaries?.attachmentDetail;
+      const aerial = payload.boundaries?.site?.aerial;
 
-      // Pre-fill dimensions from building footprint (validator already coerced to numbers)
+      // Pre-fill dimensions (validator already coerced to numbers)
       const patch: Partial<ProjectConfig> = {};
-      if (b.width !== undefined) patch.width = b.width;
-      if (b.depth !== undefined) patch.depth = b.depth;
-      if (b.height !== undefined) patch.height = b.height;
+      const width = eps?.widthM ?? b.width;
+      const depth = eps?.depthM ?? b.depth;
+      if (width !== undefined) patch.width = width;
+      if (depth !== undefined) patch.depth = depth;
 
       // Map project type
       const rawType = (s.projectType ?? '').toLowerCase();
       const mappedType = PROJECT_TYPE_MAP[rawType];
       if (mappedType) patch.buildingType = mappedType;
 
-      // Attachment type from siting tool
-      const att = payload.boundaries?.attachment;
+      // Attachment type — prefer the curated package, then the siting tool.
+      const att = epa?.type ?? payload.boundaries?.attachment;
       if (att === 'freestanding' || att === 'attached' || att === 'three-side') {
         patch.attachment = att as AttachmentType;
       }
 
-      // Pitch and eave height from siting tool
-      if (b.pitch !== undefined)        patch.pitch  = b.pitch;
-      if (b.gutterHeight !== undefined) patch.height = b.gutterHeight;
+      // Roof type from the data (previously left at the default — wrong if not a gable).
+      const rawRoof = (eps?.roofType ?? b.roofType ?? '').toLowerCase();
+      if (['gable', 'skillion', 'flat', 'hip', 'open'].includes(rawRoof)) {
+        patch.roofType = rawRoof as ProjectConfig['roofType'];
+      }
 
-      // Drive plan-drawing wall setbacks from the ACTUAL measured offsets (left/right
-      // are the side flanks). Previously these were ignored and hand-typed.
-      if (o?.left  !== undefined) setLeftSetback(o.left);
-      if (o?.right !== undefined) setRightSetback(o.right);
+      // Pitch + engineered eave height (= the gutter line).
+      const pitch = eps?.pitchDeg ?? b.pitch;
+      if (pitch !== undefined)   patch.pitch  = pitch;
+      if (gutterH !== undefined) patch.height = gutterH;
 
-      // Pre-fill title block with site address + council
-      if (s.fullAddress || r.council) {
+      // Frame standoff from the siting tool (was stuck at the 150mm default).
+      if (standoffMm !== undefined) setStandoff(standoffMm);
+
+      // NB: the measured offsets (distance to the property boundary) are NOT the
+      // plan-view wall setbacks (how far the wall cladding stops short of full depth) —
+      // they're different things. The offsets are carried as the provisional build line
+      // (siteConstraints.offsets, used by the compliance re-check); the wall setbacks stay
+      // a design decision (left full / right 1800 per the brief). Do not overwrite them here.
+
+      // Pre-fill title block with site address + council + home owner (goes on the plans)
+      const owner = payload.submission?.applicant?.name;
+      if (s.fullAddress || r.council || owner) {
         updateTB({
           projectName: s.fullAddress ?? '',
           propertyAddress: s.fullAddress ?? '',
           council: r.council ?? '',
+          ...(owner ? { clientName: owner } : {}),
           date: new Date().toLocaleDateString('en-AU'),
         });
       }
@@ -391,26 +449,58 @@ export default function App() {
       setConfig(prev => ({ ...prev, ...patch }));
       setOverrides({ post: null, beam: null, purlin: null, ledger: null, fascia: null, gableChord: null, gableDropper: null, gableTopChord: null } as MemberOverrides);
 
-      // Store site constraints — including the offsets and Intelligence's own
-      // compliance verdict, which are carried through (no longer dropped).
+      // Compliance: v1.4.0 sends counts (pass/fail/missing) instead of totalChecks.
+      // Derive the denominator so the badge stops reading "6/undefined".
+      const comp = payload.compliance;
+      const compTotal = comp
+        ? (comp.totalChecks ?? ((comp.passCount ?? 0) + (comp.failCount ?? 0) + (comp.missingCount ?? 0)))
+        : undefined;
+
+      // Stormwater sizing for Drafting's drainage sheet — keep the numbers, drop the polygons.
+      const swSummary = stormwater ? {
+        designIntensityMmHr: stormwater.designRainfall?.intensityMmHr,
+        aepPercent: stormwater.designRainfall?.aepPercent,
+        totalCatchmentAreaM2: stormwater.totalCatchmentAreaM2,
+        anyOverCapacity: stormwater.anyOverCapacity,
+        downpipes: (stormwater.dischargePoints ?? []).map(d => ({
+          label: d.downpipe ?? undefined, capacityLs: d.downpipeCapacityLs, servesM2: d.servesM2,
+        })),
+      } : undefined;
+
+      // Store site constraints — offsets, Intelligence's compliance verdict, the
+      // carried set-out (heights/standoff/overhang) and stormwater, all carried through.
       setSiteConstraints({
         address: s.fullAddress ?? '',
         zone: r.zone,
         council: r.council,
         maxHeight: r.max_height,
         setbacks: r.setbacks ? { front: r.setbacks.front, side: r.setbacks.side, rear: r.setbacks.rear } : undefined,
+        setbacksEstimated: r.setbacks_estimated,
         offsets: o ? { front: o.front, rear: o.rear, left: o.left, right: o.right } : undefined,
         siteCoverage: r.site_coverage,
         siteAreaM2: payload.boundaries?.site?.areaM2 ?? undefined,
         overlays: normalizeOverlays(r.overlays),
         confidence: r.confidence,
+        notes: r.notes,
+        gutterHeight: gutterH,
+        fasciaHeight: fasciaH,
+        ridgeHeight: ridgeH,
+        existingGutterOverhangMm: overhangMm,
+        frameStandoffMm: standoffMm,
+        sitedWidth: width,
+        sitedDepth: depth,
+        stormwater: swSummary,
+        ridgeBearing: typeof ridgeBearing === 'number' ? ridgeBearing : undefined,
+        connectionSides: connDetail?.sides,
+        connectionLengths: connDetail?.lengths,
+        aerial: aerial,
         lotPts: payload.boundaries?.site?.lotPts,
         footprint: payload.boundaries?.building?.footprint,
         frontBoundaryIndex: payload.boundaries?.site?.frontBoundaryIndex,
-        importedCompliance: payload.compliance ? {
-          approved: payload.compliance.approved,
-          passCount: payload.compliance.passCount,
-          totalChecks: payload.compliance.totalChecks,
+        importedCompliance: comp ? {
+          approved: comp.approved,
+          passCount: comp.passCount,
+          totalChecks: compTotal,
         } : undefined,
       });
 
@@ -455,11 +545,19 @@ export default function App() {
     const designedRidge = config.height + rise;
     const footprintM2 = config.width * config.depth;
 
+    // Encroachment: how far the engineered footprint has grown past the as-sited one.
+    const widthGrowth = siteConstraints.sitedWidth !== undefined ? config.width - siteConstraints.sitedWidth : 0;
+    const depthGrowth = siteConstraints.sitedDepth !== undefined ? config.depth - siteConstraints.sitedDepth : 0;
+
     const checks = checkAsDesigned({
       maxHeight: siteConstraints.maxHeight,
       designedRidge,
       requiredSetbacks: siteConstraints.setbacks,
+      requiredEstimated: siteConstraints.setbacksEstimated,  // estimates → note as provisional
+      provisionalSetbacks: siteConstraints.offsets,  // measured offsets = provisional build line
       actualOffsets: siteConstraints.offsets,
+      widthGrowth,
+      depthGrowth,
       siteCoverage: siteConstraints.siteCoverage,
       footprintM2,
       siteAreaM2: siteConstraints.siteAreaM2,
@@ -718,6 +816,9 @@ export default function App() {
 
     // Site plan — only when Intelligence has sent lot geometry.
     if (siteConstraints?.lotPts && siteConstraints.lotPts.length >= 3) {
+      const aerial = siteConstraints.aerial;
+      const aerialBbox = aerial?.bbox && aerial.bbox.length === 4
+        ? (aerial.bbox as [number, number, number, number]) : undefined;
       const planSvg = generateSitePlanSVG({
         lotPts: siteConstraints.lotPts,
         areaM2: siteConstraints.siteAreaM2,
@@ -727,6 +828,10 @@ export default function App() {
         council: siteConstraints.council,
         buildingWidth: config.width,
         buildingDepth: config.depth,
+        // v0.10.0 overlays — aerial underlay, ridge/pitch direction, dwelling connection sides.
+        ...(aerialBbox ? { aerial: { imageBase64: aerial?.imageBase64, url: aerial?.url, bbox: aerialBbox } } : {}),
+        ...(siteConstraints.ridgeBearing !== undefined ? { ridgeBearing: siteConstraints.ridgeBearing } : {}),
+        ...(siteConstraints.connectionSides ? { attachmentDetail: { sides: siteConstraints.connectionSides } } : {}),
       });
       if (planSvg) {
         sheets.push({
@@ -855,11 +960,31 @@ export default function App() {
       downloadDesignSet({
         config, calc, titleBlock, standoff, leftSetback, rightSetback,
         northRotation, cladding: selectedCladding, schedule: materialSchedule, ratePerKg,
+        heights: siteConstraints ? {
+          gutter: siteConstraints.gutterHeight,
+          fascia: siteConstraints.fasciaHeight,
+          ridge: siteConstraints.ridgeHeight,
+        } : undefined,
+        gutterOverhang: siteConstraints?.existingGutterOverhangMm,
+        drainage: siteConstraints?.stormwater,
+        notes: siteConstraints?.notes,
+        planning: siteConstraints ? {
+          requiredSetbacks: siteConstraints.setbacks,
+          requiredSetbacksEstimated: siteConstraints.setbacksEstimated,
+          provisionalSetbacks: siteConstraints.offsets,
+          maxHeight: siteConstraints.maxHeight,
+          siteCoverage: siteConstraints.siteCoverage,
+        } : undefined,
+        ridgeBearing: siteConstraints?.ridgeBearing,
+        connection: siteConstraints ? {
+          sides: siteConstraints.connectionSides,
+          lengths: siteConstraints.connectionLengths,
+        } : undefined,
       });
     } catch (err) {
       alert('DesignSet export failed: ' + (err instanceof Error ? err.message : String(err)));
     }
-  }, [config, calc, titleBlock, standoff, leftSetback, rightSetback, northRotation, selectedCladding, materialSchedule, ratePerKg]);
+  }, [config, calc, titleBlock, standoff, leftSetback, rightSetback, northRotation, selectedCladding, materialSchedule, ratePerKg, siteConstraints]);
 
   // Import a Drafting handback: load its geometry + sections into the inputs so
   // the calc engine re-runs and re-checks the returned design.
@@ -1046,6 +1171,24 @@ export default function App() {
             {siteConstraints.siteCoverage !== undefined && (
               <Chip label={`Cov: ${siteConstraints.siteCoverage}%`} />
             )}
+            {siteConstraints.fasciaHeight !== undefined && (
+              <Chip label={`Fascia: ${siteConstraints.fasciaHeight}m`} />
+            )}
+            {siteConstraints.ridgeHeight !== undefined && (
+              <Chip label={`Ridge: ${siteConstraints.ridgeHeight}m`} />
+            )}
+            {siteConstraints.frameStandoffMm !== undefined && (
+              <Chip label={`Standoff: ${siteConstraints.frameStandoffMm}mm`} />
+            )}
+            {siteConstraints.existingGutterOverhangMm !== undefined && (
+              <Chip label={`Overhang: ${siteConstraints.existingGutterOverhangMm}mm`} />
+            )}
+            {siteConstraints.stormwater?.downpipes && siteConstraints.stormwater.downpipes.length > 0 && (
+              <Chip
+                label={`Stormwater: ${siteConstraints.stormwater.downpipes.length} × ${siteConstraints.stormwater.downpipes[0].label ?? 'DP'}`}
+                warn={siteConstraints.stormwater.anyOverCapacity}
+              />
+            )}
             {siteConstraints.overlays?.map(o => <Chip key={o.name} label={o.name} warn />)}
             {siteConstraints.confidence === 'low' && (
               <Chip label="Low confidence" warn />
@@ -1055,6 +1198,15 @@ export default function App() {
               style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: '2px 4px' }}
               title="Dismiss"
             >×</button>
+            {/* Free-text notes the user typed in Intelligence — surfaced full-width so they aren't missed. */}
+            {siteConstraints.notes && (
+              <div style={{ flexBasis: '100%', fontSize: '11px', color: 'var(--text)', borderTop: '1px solid rgba(201,168,76,0.25)', paddingTop: 8, marginTop: 4, lineHeight: 1.5 }}>
+                <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--accent)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: 6 }}>
+                  Intelligence notes
+                </span>
+                {siteConstraints.notes}
+              </div>
+            )}
           </div>
         )}
 

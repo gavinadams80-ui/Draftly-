@@ -18,7 +18,14 @@ export interface AsDesignedInputs {
   maxHeight?: number;          // m — allowed (research.max_height)
   designedRidge?: number;      // m — as-designed highest point
   requiredSetbacks?: { front?: number; side?: number; rear?: number };
+  // Provisional build line carried from siting (the measured offsets), used when a
+  // confirmed council setback is missing. Per-side so left/right can differ.
+  provisionalSetbacks?: { front?: number; rear?: number; left?: number; right?: number };
   actualOffsets?: { front?: number; rear?: number; left?: number; right?: number };
+  // How much the engineered footprint has grown vs as-sited (m, ≥0). Growth eats
+  // into the boundary clearance, so the structure can encroach on the build line.
+  widthGrowth?: number;        // drives left/right clearance
+  depthGrowth?: number;        // drives front/rear clearance
   siteCoverage?: number;       // % — allowed (research.site_coverage)
   footprintM2?: number;        // m² — as-designed building footprint
   siteAreaM2?: number;         // m² — lot area
@@ -49,30 +56,53 @@ export function checkAsDesigned(i: AsDesignedInputs): ComplianceCheck[] {
     });
   }
 
-  // ── Setbacks (required vs actual offset; bigger is safer: must meet or exceed) ──
+  // ── Setbacks (required vs actual clearance; bigger is safer: must meet or exceed) ──
+  // When a confirmed council setback exists we check against it. When it doesn't,
+  // we fall back to the PROVISIONAL build line (the measured offset = where the
+  // structure was sited): the design must not grow past it. The clearance is the
+  // measured offset minus how much the footprint has grown since siting.
   const req = i.requiredSetbacks ?? {};
+  const prov = i.provisionalSetbacks ?? {};
   const act = i.actualOffsets ?? {};
-  const setbackRow = (label: string, required?: number, actual?: number) => {
-    if (required === undefined && actual === undefined) return;
-    const pass = required !== undefined && actual !== undefined ? actual >= required - 1e-6 : null;
+  const wG = Math.max(0, i.widthGrowth ?? 0);   // eats into left/right
+  const dG = Math.max(0, i.depthGrowth ?? 0);   // eats into front/rear
+  const setbackRow = (label: string, confirmedReq?: number, provReq?: number, offset?: number, growth = 0) => {
+    const required = confirmedReq ?? provReq;
+    const provisional = confirmedReq === undefined && provReq !== undefined;
+    if (required === undefined && offset === undefined) return;
+    const actual = offset !== undefined ? offset - growth : undefined;
+    let pass: boolean | null;
     let note: string | undefined;
     if (required !== undefined && actual !== undefined) {
+      const ok = actual >= required - 1e-6;
       const margin = actual - required;
-      note = margin >= 0 ? `${margin.toFixed(2)} m clearance` : `${(-margin).toFixed(2)} m short`;
+      if (provisional) {
+        // Don't claim confirmed compliance against an unconfirmed line — only flag encroachment.
+        pass = ok ? null : false;
+        note = ok ? 'provisional — within sited build line'
+                  : `${(-margin).toFixed(2)} m past provisional line — re-confirm siting`;
+      } else {
+        pass = ok;
+        note = margin >= 0 ? `${margin.toFixed(2)} m clearance` : `${(-margin).toFixed(2)} m short`;
+      }
+    } else {
+      pass = null;
     }
     checks.push({
-      label: `${label} setback`,
-      required: required !== undefined ? `≥ ${m1(required)}` : '—',
+      label: provisional ? `${label} setback (provisional)` : `${label} setback`,
+      required: required !== undefined ? `≥ ${m1(required)}${provisional ? ' (prov.)' : ''}` : '—',
       actual: m(actual),
       pass,
-      rule: `The measured distance from the structure to the ${label.toLowerCase()} boundary must be at least the required planning setback.`,
+      rule: provisional
+        ? `Provisional build line carried from siting — the council setback isn't confirmed. The structure must not grow past where it was sited; confirm the planning setback before submission.`
+        : `The measured distance from the structure to the ${label.toLowerCase()} boundary must be at least the required planning setback.`,
       note,
     });
   };
-  setbackRow('Front', req.front, act.front);
-  setbackRow('Rear', req.rear, act.rear);
-  setbackRow('Left', req.side, act.left);   // 'side' requirement applies to both flanks
-  setbackRow('Right', req.side, act.right);
+  setbackRow('Front', req.front, prov.front, act.front, dG);
+  setbackRow('Rear',  req.rear,  prov.rear,  act.rear,  dG);
+  setbackRow('Left',  req.side,  prov.left,  act.left,  wG);   // 'side' requirement applies to both flanks
+  setbackRow('Right', req.side,  prov.right, act.right, wG);
 
   // ── Site coverage ── (smaller is safer: must be at or under the limit)
   if (i.siteCoverage !== undefined) {

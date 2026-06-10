@@ -243,6 +243,10 @@ interface SiteConstraints {
   ridgeHeight?: number;   // m — ridge / highest point
   existingGutterOverhangMm?: number;  // mm — overhang of the existing dwelling gutter (wall-section set-out)
   frameStandoffMm?: number;           // mm — frame standoff from the dwelling (also applied to the standoff input)
+  // As-sited footprint (m) — the offsets were measured for this. If the engineered
+  // width/depth grows past it, the structure encroaches on the provisional build line.
+  sitedWidth?: number;
+  sitedDepth?: number;
   // Stormwater sizing carried from siting → for Drafting's drainage sheet.
   stormwater?: {
     designIntensityMmHr?: number;
@@ -469,6 +473,8 @@ export default function App() {
         ridgeHeight: ridgeH,
         existingGutterOverhangMm: overhangMm,
         frameStandoffMm: standoffMm,
+        sitedWidth: width,
+        sitedDepth: depth,
         stormwater: swSummary,
         lotPts: payload.boundaries?.site?.lotPts,
         footprint: payload.boundaries?.building?.footprint,
@@ -521,11 +527,18 @@ export default function App() {
     const designedRidge = config.height + rise;
     const footprintM2 = config.width * config.depth;
 
+    // Encroachment: how far the engineered footprint has grown past the as-sited one.
+    const widthGrowth = siteConstraints.sitedWidth !== undefined ? config.width - siteConstraints.sitedWidth : 0;
+    const depthGrowth = siteConstraints.sitedDepth !== undefined ? config.depth - siteConstraints.sitedDepth : 0;
+
     const checks = checkAsDesigned({
       maxHeight: siteConstraints.maxHeight,
       designedRidge,
       requiredSetbacks: siteConstraints.setbacks,
+      provisionalSetbacks: siteConstraints.offsets,  // measured offsets = provisional build line
       actualOffsets: siteConstraints.offsets,
+      widthGrowth,
+      depthGrowth,
       siteCoverage: siteConstraints.siteCoverage,
       footprintM2,
       siteAreaM2: siteConstraints.siteAreaM2,

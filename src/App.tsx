@@ -33,6 +33,7 @@ import { parseHandoff } from '@/lib/handoffSchema';
 import { checkAsDesigned, summarise } from '@/lib/compliance';
 import { buildChecklist, summariseChecklist, serializeChecklist, stageLabel, type ItemStatus } from '@/lib/checklist';
 import { normalizeOverlays, getOverlayGuidance, type NormalizedOverlay } from '@/lib/overlays';
+import { generateOverlaySitePlanSVG } from '@/lib/overlaySitePlan';
 import type { ExportSheet } from '@/lib/exportPdf';
 import { downloadDesignSet } from '@/lib/designSetExport';
 import { readDesignSetForReview } from '@/lib/designSetReview';
@@ -295,6 +296,9 @@ interface SiteConstraints {
   lotPts?: LatLng[];
   footprint?: LatLng[];
   frontBoundaryIndex?: number;
+  // Planning overlays WITH geometry — the overlay polygon(s) intersecting the lot + a
+  // partial-coverage flag, so the site plan shows exactly where each overlay sits on the block.
+  overlayShapes?: { code?: string; name?: string; type?: string; partial?: boolean; rings?: LatLng[][] }[];
 }
 
 // Map Intelligence projectType strings → Engineering BuildingType enum
@@ -553,6 +557,7 @@ export default function App() {
         lotPts: payload.boundaries?.site?.lotPts,
         footprint: payload.boundaries?.building?.footprint,
         frontBoundaryIndex: payload.boundaries?.site?.frontBoundaryIndex,
+        overlayShapes: payload.engineeringPackage?.site?.overlays ?? payload.boundaries?.overlayReview?.shapes,
         importedCompliance: comp ? {
           approved: comp.approved,
           passCount: comp.passCount,
@@ -962,6 +967,26 @@ export default function App() {
           svg: withTitleBlock(planSvg, titleBlock, 'Site Plan — Structure on Lot', 'S-000', 1, 1, 'NTS'),
           description: 'Lot boundary with the proposed structure positioned to the measured setbacks. Boundary lengths, lot area and north shown.',
         });
+      }
+
+      // Planning-overlays site plan — only when Intelligence carried overlay geometry. Shows each
+      // confirmed overlay clipped to the block, so partial (corner-clipping) coverage is explicit.
+      if (siteConstraints.overlayShapes && siteConstraints.overlayShapes.some((o) => o.rings && o.rings.length)) {
+        const ovSvg = generateOverlaySitePlanSVG({
+          lotPts: siteConstraints.lotPts,
+          overlays: siteConstraints.overlayShapes,
+          footprint: siteConstraints.footprint,
+          frontBoundaryIndex: siteConstraints.frontBoundaryIndex,
+          areaM2: siteConstraints.siteAreaM2,
+          council: siteConstraints.council,
+        });
+        if (ovSvg) {
+          sheets.push({
+            title: 'Site Plan — Planning Overlays', number: 'S-000a',
+            svg: withTitleBlock(ovSvg, titleBlock, 'Site Plan — Planning Overlays', 'S-000a', 1, 1, 'NTS'),
+            description: 'Confirmed planning overlays mapped onto the block, clipped to the lot boundary. Overlays flagged where they cover only part of the lot. Extents are indicative — confirm on the planning portal.',
+          });
+        }
       }
     }
 

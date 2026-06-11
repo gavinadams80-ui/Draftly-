@@ -65,6 +65,18 @@ const OverlayObjectSchema = z.object({
 const OverlaySchema = z.union([z.string(), OverlayObjectSchema]);
 export type HandoffOverlay = z.infer<typeof OverlaySchema>;
 
+// Overlay GEOMETRY carried from the siting tool — the actual overlay polygon(s) intersecting the
+// lot, plus a `partial` flag (true = covers only part of the block, e.g. a corner-clipping bushfire
+// overlay). Drawn on the Engineering site plan so the overlay's extent over the block is explicit.
+const OverlayShapeSchema = z.object({
+  code: z.string().optional(),
+  name: z.string().optional(),
+  type: z.string().optional(),
+  partial: z.boolean().optional(),               // true = covers only part of the lot
+  rings: z.array(z.array(LatLngSchema)).optional(),  // polygon parts (lat/lng), parcel-intersected
+}).partial();
+export type HandoffOverlayShape = z.infer<typeof OverlayShapeSchema>;
+
 // Stormwater set-out the siting tool computes — design rainfall + the downpipes
 // and the catchment they each serve. Carried so Drafting can build the drainage
 // sheet instead of re-deriving it. Catchment polygons are intentionally left out
@@ -137,6 +149,13 @@ const EngineeringPackageSchema = z.object({
     frameStandoffMm: numish,
   }).partial().optional(),
   setbacks: OffsetsSchema.optional(),
+  site: z.object({
+    areaM2: z.number().nullable().optional(),
+    lotPolygon: z.array(LatLngSchema).optional(),
+    frontBoundaryIndex: z.number().nullable().optional(),
+    northBearingDeg: z.number().nullable().optional(),
+    overlays: z.array(OverlayShapeSchema).optional(),  // confirmed overlays + geometry
+  }).partial().optional(),
   stormwater: StormwaterSchema.optional(),
   electrical: ElectricalSchema.optional(),
   ready: z.boolean().optional(),
@@ -210,6 +229,12 @@ export const HandoffSchema = z.object({
     }).partial().optional(),
     stormwater: StormwaterSchema.optional(),  // downpipes + catchment sizing from the siting tool
     electrical: ElectricalSchema.optional(),  // lighting/electrical scope (executed + certified by a licensed electrician)
+    // Planning overlays the user confirmed, WITH geometry — for the site-plan overlay sheet.
+    overlayReview: z.object({
+      confirmed: z.array(z.string()).optional(),
+      excluded: z.array(z.string()).optional(),
+      shapes: z.array(OverlayShapeSchema).optional(),
+    }).partial().optional(),
   }).partial().optional(),
 
   compliance: z.object({

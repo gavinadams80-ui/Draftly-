@@ -742,19 +742,6 @@ export default function App() {
     const longBraceSection = longCand ? longCand.s.size : null;
     const braceBayLengthM = Math.hypot(frameSpacing, config.height); // diagonal length
 
-    // ── PLYWOOD CEILING DIAPHRAGM ──
-    // When chosen, the ceiling ply is the shear element (no frame sway). Sized for
-    // the in-plane unit shear from each direction, scaled by the per-side restraint
-    // (attached faces shed their load straight to the dwelling).
-    const plyDiaphragm: PlyDiaphragmResult | null =
-      config.bracing === 'ply-ceiling-diaphragm'
-        ? calcPlyCeilingDiaphragm({
-            width: actualSpan, depth: config.depth, wallHeight: config.height, rise: riseM,
-            windKpa: config.windPressureKpa, transverse: restraint.transverse, longitudinal: restraint.longitudinal,
-            detail: diaphragmDetail,
-          })
-        : null;
-
     // ── PURLIN ── spans between portal frames
     const purlinResults = calcUtilisation(
       sections.rafters, frameSpacing, purlinSpacing, config.constructionType,
@@ -762,6 +749,22 @@ export default function App() {
     );
     let selPurlin = overrides.purlin ? purlinResults.find((r) => r.sec.size === overrides.purlin) || null : null;
     if (!selPurlin) selPurlin = lightestPassingForm(purlinResults, forms.purlin);
+
+    // ── PLYWOOD CEILING DIAPHRAGM ──
+    // When chosen, the ceiling ply is the shear element (no frame sway). Sized for
+    // the in-plane unit shear from each direction, scaled by the per-side restraint
+    // (attached faces shed their load straight to the dwelling). The selected purlin
+    // section feeds the steel web-bearing check for the timber-battened detail.
+    const purlinSec = selPurlin?.sec;
+    const plyDiaphragm: PlyDiaphragmResult | null =
+      config.bracing === 'ply-ceiling-diaphragm'
+        ? calcPlyCeilingDiaphragm({
+            width: actualSpan, depth: config.depth, wallHeight: config.height, rise: riseM,
+            windKpa: config.windPressureKpa, transverse: restraint.transverse, longitudinal: restraint.longitudinal,
+            detail: diaphragmDetail,
+            purlin: purlinSec ? { d: purlinSec.d, t: purlinSec.t, fy: purlinSec.fy } : undefined,
+          })
+        : null;
 
     // ── LEDGER ── attached to house wall, spans between portal frame rafters
     // The ledger is an outrigger off the house. It spans frame-to-frame.

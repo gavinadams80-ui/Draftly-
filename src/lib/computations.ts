@@ -15,7 +15,7 @@ import {
   PHI, LTB_FACTORS, BRACING_FACTORS,
   CEILING_SCREW_SHEAR_KN, CONTAINED_FIXING_SHEAR_KN,
   PLY_DENSITY_KG_M3, TIMBER_DENSITY_KG_M3, BATTEN_W_M, BATTEN_D_M,
-  CEILING_INSULATION_KPA, CEILING_TRIB_WALL_FRACTION,
+  CEILING_INSULATION_KPA, CEILING_TRIB_WALL_FRACTION, WEB_BEARING,
   calcPlyCeilingDiaphragm,
   type LateralRestraint, type PlyDiaphragmResult,
 } from '@/lib/engine';
@@ -93,6 +93,7 @@ export function buildComputations(inp: ComputationsInput): CompSection[] {
       { ref: 'h_trib', desc: 'Wall-height fraction reaching the ceiling plane', expr: 'ASSUMED tributary rule', value: n2(CEILING_TRIB_WALL_FRACTION), kind: 'assumed' },
       { ref: 'ρ', desc: 'Densities — ply / timber batten', expr: 'ASSUMED material properties', value: `${n0(PLY_DENSITY_KG_M3)} / ${n0(TIMBER_DENSITY_KG_M3)} kg/m³`, kind: 'assumed' },
       { ref: 'batt', desc: 'Batten cross-section · ceiling insulation', expr: 'ASSUMED', value: `${n0(BATTEN_W_M * 1000)}×${n0(BATTEN_D_M * 1000)} mm · ${n2(CEILING_INSULATION_KPA)} kPa`, kind: 'assumed' },
+      { ref: 'R_w', desc: 'Web-bearing coeffs C / Cr / Cn / Ch · φ', expr: 'ASSUMED — AS/NZS 4600 §3.3.6, lipped-C IOF', value: `${WEB_BEARING.C}/${WEB_BEARING.Cr}/${WEB_BEARING.Cn}/${WEB_BEARING.Ch} · ${n2(WEB_BEARING.phi)}`, kind: 'assumed' },
     );
   }
   sections.push({ heading: '1 · Design basis & assumptions', rows: basis });
@@ -140,6 +141,9 @@ export function buildComputations(inp: ComputationsInput): CompSection[] {
       { ref: 'v_T/v_L', desc: 'Diaphragm unit shear (transverse / long.)', expr: `(w·L/2)/depth`, value: `${n2(pd.vTransverse)} / ${n2(pd.vLongitudinal)} kN/m`, kind: 'normal' },
       { ref: 'v*', desc: `Governing unit shear (${pd.governing})`, value: `${n2(pd.vDemand)} kN/m`, kind: 'normal' },
       { ref: 'fixing', desc: `Detail — ${pd.detail}`, expr: `Q/v* → spacing (Q=${n1(pd.perFixingKN)} kN)`, value: `${pd.plyThicknessMm}mm ply @ ${pd.edgeSpacingMm}mm`, kind: pd.edgeSpacingOk ? 'pass' : 'fail' },
+      ...(pd.detail === 'timber-battened' && pd.webBearingKN > 0 ? [
+        { ref: 'φR_w', desc: `Steel web bearing per batten (AS/NZS 4600 §3.3.6)`, expr: `vs timber ${n1(CONTAINED_FIXING_SHEAR_KN)} kN → ${pd.containedGovern} governs`, value: `${n1(pd.webBearingKN)} kN`, kind: (pd.containedGovern === 'steel' ? 'assumed' : 'pass') as RowKind },
+      ] : []),
       { ref: 'C', desc: 'Diaphragm chord force (perimeter purlin)', expr: `w·L²/8 / depth`, value: `${n1(pd.chordForceKN)} kN`, kind: 'normal' },
       { ref: 'mass', desc: 'Ceiling mass vs 12mm screw-fixed baseline', expr: `ply + battens`, value: `${n0(pd.totalMassKg)} / ${n0(pd.baseline12mmMassKg)} kg`, kind: 'note' },
     );

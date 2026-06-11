@@ -513,6 +513,28 @@ export const CEILING_INSULATION_KPA = 0.04; // blanket/batt insulation laid on t
 // gable rise reaching the ceiling diaphragm). ASSUMED tributary rule.
 export const CEILING_TRIB_WALL_FRACTION = 0.5;
 
+// ── Cold-formed web bearing / crippling (AS/NZS 4600 §3.3.6) ──
+// A contained batten wedged in the C-channel bears against the thin web; the
+// steel can crush locally before the timber does. Capacity (single unstiffened
+// web, interior one-flange loading, fastened-to-support analogy):
+//   φR_w = φ·C·t²·f_y·(1 − Cr√(r/t))·(1 + Cn√(l_b/t))·(1 − Ch√(d1/t))   [sinθ=1]
+// Coefficients are ASSUMED representative values for a lipped channel (confirm
+// the case + section-specific coefficients from AS/NZS 4600 Table 3.3.6.x).
+export interface WebBearingCoeffs { C: number; Cr: number; Cn: number; Ch: number; phi: number; rOverT: number; }
+export const WEB_BEARING: WebBearingCoeffs = { C: 13, Cr: 0.23, Cn: 0.14, Ch: 0.01, phi: 0.75, rOverT: 1.0 };
+
+/** Design web-bearing capacity per batten contact (kN). d,t,l_b in mm; f_y in MPa. */
+export function calcWebBearingKN(d: number, t: number, fy: number, bearingLenMm: number, k: WebBearingCoeffs = WEB_BEARING): number {
+  if (!(t > 0) || !(fy > 0)) return 0;
+  const r = k.rOverT * t;                         // inside bend radius (ASSUMED r = t)
+  const d1 = Math.max(0, d - 2 * (t + r));        // flat web depth
+  const Rw = k.C * t * t * fy
+    * (1 - k.Cr * Math.sqrt(r / t))
+    * (1 + k.Cn * Math.sqrt(bearingLenMm / t))
+    * (1 - k.Ch * Math.sqrt(d1 / t));             // N
+  return Math.max(0, (k.phi * Rw) / 1000);        // kN
+}
+
 export interface PlyDiaphragmInput {
   width: number;        // m — building width (eaves-to-eaves span), W
   depth: number;        // m — building length along the ridge, D
@@ -522,6 +544,9 @@ export interface PlyDiaphragmInput {
   transverse: number;   // per-side restraint factor on the long-wall (transverse) load
   longitudinal: number; // per-side restraint factor on the gable-end (longitudinal) load
   detail?: DiaphragmDetail; // shear-transfer detail (default 'screw-fixed')
+  // Purlin section the battens bear against — enables the steel web-bearing check
+  // for the timber-battened detail.
+  purlin?: { d: number; t: number; fy: number };
 }
 
 export interface PlyDiaphragmResult {
@@ -533,7 +558,9 @@ export interface PlyDiaphragmResult {
   chordForceKN: number;   // kN — governing diaphragm chord (perimeter purlin) axial force
   plyThicknessMm: number; // recommended ply thickness
   fixing: string;         // fixing spec (screw or contained batten)
-  perFixingKN: number;    // design shear per fixing/batten used
+  perFixingKN: number;    // design shear per fixing/batten used (governing capacity)
+  webBearingKN: number;   // steel web-bearing capacity per batten (0 if n/a)
+  containedGovern: 'timber' | 'steel' | null; // which limits the contained batten
   edgeSpacingMm: number;  // required fixing/batten spacing at panel edges (clamped)
   fieldSpacingMm: number; // internal/field spacing
   edgeSpacingOk: boolean; // false when the raw requirement is below the practical minimum
@@ -576,8 +603,26 @@ export function calcPlyCeilingDiaphragm(inp: PlyDiaphragmInput): PlyDiaphragmRes
 
   const battened = detail === 'timber-battened';
   // Bearing-governed (contained) capacity is higher and battens space wider than
-  // screws; screw-fixed capacity is lower and edges nail closer.
-  const perFixingKN = battened ? CONTAINED_FIXING_SHEAR_KN : CEILING_SCREW_SHEAR_KN;
+  // screws; screw-fixed capacity is lower and edges nail closer. For the contained
+  // detail the per-batten capacity is the LESSER of timber bearing and the thin
+  // C-section web bearing — the steel can govern.
+  const battenLenMm = BATTEN_W_M * 1000;
+  let webBearingKN = 0;
+  let containedGovern: 'timber' | 'steel' | null = null;
+  let perFixingKN = battened ? CONTAINED_FIXING_SHEAR_KN : CEILING_SCREW_SHEAR_KN;
+  if (battened) {
+    if (inp.purlin) {
+      webBearingKN = calcWebBearingKN(inp.purlin.d, inp.purlin.t, inp.purlin.fy, battenLenMm);
+      if (webBearingKN > 0 && webBearingKN < CONTAINED_FIXING_SHEAR_KN) {
+        perFixingKN = webBearingKN;
+        containedGovern = 'steel';
+      } else {
+        containedGovern = 'timber';
+      }
+    } else {
+      containedGovern = 'timber'; // no section supplied — timber bearing assumed to govern
+    }
+  }
   const fixing = battened ? `45×35 batten (contained) + ${CEILING_SCREW} (out-of-plane only)` : CEILING_SCREW;
   const minMm = battened ? 100 : 50;     // closest practical spacing
   const maxMm = battened ? 600 : 300;    // widest sensible spacing
@@ -619,7 +664,12 @@ export function calcPlyCeilingDiaphragm(inp: PlyDiaphragmInput): PlyDiaphragmRes
   if (battened) {
     notes.push(`Pack 45×35 timber battens into the C-channel with a diagonal cross-brace filling each square; shear transfers by timber-on-steel BEARING, so the contained square holds even if a screw shears. Battens at ${edgeSpacingMm} mm; ${plyThicknessMm} mm ply skin closes the panel. Screws retain the panel out-of-plane only.`);
     notes.push(`Ceiling mass ≈ ${totalMassKg.toFixed(0)} kg (${(totalMassKg / plyAreaM2).toFixed(1)} kg/m²) vs ${baseline12mmMassKg.toFixed(0)} kg for 12 mm screw-fixed ply — ${massSavingPct >= 0 ? `${massSavingPct.toFixed(0)}% lighter` : `${(-massSavingPct).toFixed(0)}% heavier`}.`);
-    notes.push(`Pack battens tight and allow for timber shrinkage (gap = slip); check LOCAL C-section web bearing against the batten thrust — the thin steel can govern, not the timber. Keep battens dry behind the sarking; consider termite/durability.`);
+    if (webBearingKN > 0) {
+      notes.push(`Local C-section web bearing φR_w ≈ ${webBearingKN.toFixed(1)} kN/batten (AS/NZS 4600 §3.3.6) ${containedGovern === 'steel' ? `< timber ${CONTAINED_FIXING_SHEAR_KN.toFixed(1)} kN → STEEL GOVERNS the contained capacity` : `≥ timber ${CONTAINED_FIXING_SHEAR_KN.toFixed(1)} kN → timber bearing governs`}. Pack battens tight, allow for timber shrinkage (gap = slip).`);
+    } else {
+      notes.push(`Check LOCAL C-section web bearing against the batten thrust — the thin steel can govern, not the timber (supply the purlin section to size it). Pack battens tight; allow for shrinkage.`);
+    }
+    notes.push(`Keep battens dry behind the sarking; consider termite/durability.`);
   } else {
     notes.push(`Fix ${plyThicknessMm} mm structural ply to the purlin bottom flanges; ${CEILING_SCREW} at ${edgeSpacingMm} mm panel edges / ${fieldSpacingMm} mm field.`);
   }
@@ -631,7 +681,7 @@ export function calcPlyCeilingDiaphragm(inp: PlyDiaphragmInput): PlyDiaphragmRes
 
   return {
     detail, vTransverse, vLongitudinal, vDemand, governing, chordForceKN,
-    plyThicknessMm, fixing, perFixingKN, edgeSpacingMm, fieldSpacingMm, edgeSpacingOk,
+    plyThicknessMm, fixing, perFixingKN, webBearingKN, containedGovern, edgeSpacingMm, fieldSpacingMm, edgeSpacingOk,
     plyAreaM2, screwCount, selfWeightKpa,
     plyMassKg, battenMassKg, totalMassKg, baseline12mmMassKg, massSavingPct,
     notes,
@@ -744,6 +794,23 @@ export function runPlyDiaphragmChecks(): { name: string; pass: boolean; detail: 
   check('F: contained fixing spacing ≥ screw spacing (same demand)',
     e.edgeSpacingMm >= a.edgeSpacingMm && e.perFixingKN > CEILING_SCREW_SHEAR_KN,
     `battened=${e.edgeSpacingMm} screw=${a.edgeSpacingMm}`);
+
+  // G. Web-bearing capacity (AS/NZS 4600 §3.3.6) — sane magnitude for a 1.5 mm web.
+  const rw = calcWebBearingKN(200, 1.5, 450, 45);
+  check('G: web bearing φR_w in a sane range (1.5 mm web)',
+    rw > 8 && rw < 16, `φR_w=${rw.toFixed(1)} kN`);
+
+  // H. Thin (1.0 mm) purlin → the STEEL web governs the contained capacity.
+  const thin = calcPlyCeilingDiaphragm({ width: 8, depth: 6, wallHeight: 3, rise: 0, windKpa: 1.0, transverse: 1, longitudinal: 1, detail: 'timber-battened', purlin: { d: 200, t: 1.0, fy: 450 } });
+  check('H: thin web governs contained capacity (steel < timber)',
+    thin.containedGovern === 'steel' && thin.webBearingKN < CONTAINED_FIXING_SHEAR_KN && approx(thin.perFixingKN, thin.webBearingKN, 1e-9),
+    `govern=${thin.containedGovern} Rw=${thin.webBearingKN.toFixed(1)} Q=${thin.perFixingKN.toFixed(1)}`);
+
+  // I. Thick (2.4 mm) purlin → timber bearing governs (capacity stays at the timber value).
+  const thick = calcPlyCeilingDiaphragm({ width: 8, depth: 6, wallHeight: 3, rise: 0, windKpa: 1.0, transverse: 1, longitudinal: 1, detail: 'timber-battened', purlin: { d: 200, t: 2.4, fy: 450 } });
+  check('I: thick web → timber governs, capacity = 8.0 kN',
+    thick.containedGovern === 'timber' && approx(thick.perFixingKN, CONTAINED_FIXING_SHEAR_KN, 1e-9),
+    `govern=${thick.containedGovern} Rw=${thick.webBearingKN.toFixed(1)} Q=${thick.perFixingKN.toFixed(1)}`);
 
   return out;
 }

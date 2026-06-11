@@ -12,7 +12,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const src = resolve(here, '../src');
 
 const result = await build({
-  entryPoints: [resolve(src, 'lib/engine.ts'), resolve(src, 'lib/computations.ts')],
+  entryPoints: [resolve(src, 'lib/engine.ts'), resolve(src, 'lib/computations.ts'), resolve(src, 'lib/checklist.ts')],
   bundle: true,
   format: 'esm',
   platform: 'node',
@@ -34,10 +34,12 @@ for (const f of result.outputFiles) {
 try {
   const engine = await import(byName['engine.js']);
   const comps = await import(byName['computations.js']);
+  const checklist = await import(byName['checklist.js']);
   const checks = [
     ...engine.runLateralRestraintChecks(),
     ...engine.runPlyDiaphragmChecks(),
     ...comps.runComputationsChecks(),
+    ...checklist.runChecklistChecks(),
   ];
   let failed = 0;
   for (const c of checks) {

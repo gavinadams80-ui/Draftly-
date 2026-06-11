@@ -12,7 +12,9 @@ import {
 import type { ProjectConfig } from '@/types';
 
 type AnySec = { size?: string; d?: number; b?: number; t?: number } | null | undefined;
-type Sel = { sec?: AnySec } | null | undefined;
+// The live calc result carries the real pass/utilisation — handed over so Drafting
+// sees the true member status instead of an assumed "pass".
+type Sel = { sec?: AnySec; passed?: boolean; util?: number } | null | undefined;
 
 // ── Ridge orientation + per-side attachment (carried from Intelligence) ──
 // The shared lib (≥ v0.11.0) defines these on DesignGeometry; this app still
@@ -92,12 +94,21 @@ export interface DesignSetSource {
   ridgeBearing?: number;  // deg — ridge line bearing (compass)
   rotationDeg?: number;   // deg — bearing of footprint edge 0→1 (the depth axis), for the ridge-axis resolve
   connection?: { sides?: Record<string, boolean>; lengths?: Record<string, number | null> };
+  // Progressive handover checklist — carried so Drafting continues ticking the
+  // drafting + certification items and the list keeps its state across the boundary.
+  readiness?: {
+    percent: number;
+    readyForHandover: boolean;
+    items: { id: string; status: 'done' | 'todo' | 'na' }[];
+  };
 }
 
 function member(id: string, role: string, sel: Sel): DesignMember | null {
   const s = sel?.sec;
   if (!s || !s.size) return null;
-  return { id, role, section: s.size, d: s.d ?? 0, b: s.b, t: s.t, check: { pass: true } };
+  const pass = sel?.passed ?? true;
+  const note = typeof sel?.util === 'number' ? `${sel.util.toFixed(0)}% utilisation` : undefined;
+  return { id, role, section: s.size, d: s.d ?? 0, b: s.b, t: s.t, check: { pass, ...(note ? { note } : {}) } };
 }
 
 const m = (metres: number) => Math.round(metres * 1000); // m → mm
@@ -167,6 +178,7 @@ export function buildDesignSetJSON(src: DesignSetSource): string {
         ...(src.planning ? { planning: src.planning } : {}),
         ...(src.ridgeBearing !== undefined ? { ridgeBearing: src.ridgeBearing } : {}),
         ...(src.connection ? { connection: src.connection } : {}),
+        ...(src.readiness ? { readiness: src.readiness } : {}),
       },
       loads: { windUltimateKpa: c.windPressureKpa },
       schedule: {

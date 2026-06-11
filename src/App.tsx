@@ -31,6 +31,7 @@ import { generateBomSVG } from '@/lib/bomDrawing';
 import { buildComputations, generateComputationsSheetSVGs } from '@/lib/computations';
 import { parseHandoff } from '@/lib/handoffSchema';
 import { checkAsDesigned, summarise } from '@/lib/compliance';
+import { buildChecklist, summariseChecklist, serializeChecklist, stageLabel, type ItemStatus } from '@/lib/checklist';
 import { normalizeOverlays, getOverlayGuidance, type NormalizedOverlay } from '@/lib/overlays';
 import type { ExportSheet } from '@/lib/exportPdf';
 import { downloadDesignSet } from '@/lib/designSetExport';
@@ -360,6 +361,7 @@ export default function App() {
   const [selectedCladding, setSelectedCladding] = useState('poly-twin-10');
   const [standoff, setStandoff] = useState(150);        // mm — standoff from house fascia
   const [diaphragmDetail, setDiaphragmDetail] = useState<DiaphragmDetail>('timber-battened'); // ply ceiling shear-transfer detail
+  const [carriedReadiness, setCarriedReadiness] = useState<{ id: string; status: ItemStatus }[] | undefined>(undefined); // Drafting/cert ticks from a handback
   const [leftSetback, setLeftSetback] = useState(0);    // m — right-side wall stops this far from front (0 = full depth)
   const [rightSetback, setRightSetback] = useState(1.8); // m — right-side wall stops this far from front
   const [titleBlock, setTitleBlock] = useState<TitleBlockData>(DEFAULT_TITLE_BLOCK);
@@ -841,6 +843,44 @@ export default function App() {
     };
   }, [config, forms, overrides, selectedProfile, siteConstraints?.connectionSides, diaphragmDetail]);
 
+  // ── Progressive handover / certification checklist ──
+  // Auto-ticks from whatever state is present (Intelligence import + the live
+  // calc + compliance), merges any Drafting/Certification ticks returned in a
+  // handback, and drives the readiness panel + soft issue-gate.
+  const checklist = useMemo(() => {
+    const sc = siteConstraints;
+    const reqMembers = [calc.selPost, calc.selBeam, calc.selPurlin];
+    if (config.roofType === 'gable') reqMembers.push(calc.selGableChord, calc.selGableDropper);
+    const allMembersPass = reqMembers.every((r) => r != null && r.passed);
+    // Lateral resolved: a non-sway scheme is inherently OK; a sway scheme needs drift OK;
+    // a ply ceiling needs its fixing spacing to work.
+    const lateralResolved =
+      calc.plyDiaphragm ? calc.plyDiaphragm.edgeSpacingOk
+      : calc.lateral ? calc.driftOk
+      : true;
+    const items = buildChecklist({
+      hasSite: !!sc,
+      address: sc?.address || undefined,
+      council: sc?.council,
+      zone: sc?.zone,
+      maxHeight: sc?.maxHeight,
+      hasSetbacks: !!(sc?.setbacks || sc?.offsets),
+      hasLotGeometry: !!(sc?.lotPts && sc.lotPts.length >= 3),
+      overlaysCount: sc?.overlays?.length ?? 0,
+      sitingComplianceKnown: !!sc?.importedCompliance,
+      heights: { gutter: sc?.gutterHeight !== undefined, fascia: sc?.fasciaHeight !== undefined, ridge: sc?.ridgeHeight !== undefined },
+      hasConnectionDetail: !!sc?.connectionSides,
+      windKpa: config.windPressureKpa,
+      dimsSet: config.width > 0 && config.depth > 0 && config.height > 0,
+      allMembersPass,
+      lateralResolved,
+      compliance: compliance ? { assessable: compliance.assessable, failCount: compliance.failCount } : null,
+      hasComputations: !!(calc.selPost && calc.selBeam),
+      carried: carriedReadiness,
+    });
+    return summariseChecklist(items);
+  }, [siteConstraints, config.width, config.depth, config.height, config.roofType, config.windPressureKpa, calc, compliance, carriedReadiness]);
+
   // ── Material take-off & cost ──
   const [ratePerKg, setRatePerKg] = useState(6.5);
   const materialSchedule = useMemo(() => buildSchedule(config, calc, standoff, ratePerKg), [config, calc, standoff, ratePerKg]);
@@ -1043,11 +1083,16 @@ export default function App() {
           sides: siteConstraints.connectionSides,
           lengths: siteConstraints.connectionLengths,
         } : undefined,
+        readiness: {
+          percent: checklist.percent,
+          readyForHandover: checklist.readyForHandover,
+          items: serializeChecklist(checklist.items),
+        },
       });
     } catch (err) {
       alert('DesignSet export failed: ' + (err instanceof Error ? err.message : String(err)));
     }
-  }, [config, calc, titleBlock, standoff, leftSetback, rightSetback, northRotation, selectedCladding, materialSchedule, ratePerKg, siteConstraints]);
+  }, [config, calc, titleBlock, standoff, leftSetback, rightSetback, northRotation, selectedCladding, materialSchedule, ratePerKg, siteConstraints, checklist]);
 
   // Import a Drafting handback: load its geometry + sections into the inputs so
   // the calc engine re-runs and re-checks the returned design.
@@ -1062,6 +1107,7 @@ export default function App() {
         setOverrides(prev => ({ ...prev, ...r.overrides }));
         updateTB(r.titleBlock);
         setNorthRotation(r.northRotation);
+        if (r.carriedReadiness) setCarriedReadiness(r.carriedReadiness); // keep Drafting/cert ticks
         const fails = r.ds.members.filter(m => m.check && !m.check.pass).length;
         alert(
           `Loaded "${r.ds.project.projectName || 'design'}" for review.\n` +
@@ -2291,6 +2337,51 @@ export default function App() {
           {/* ── TAB: DRAWINGS ── */}
           <TabsContent value="drawings">
             <div className="config-grid" style={{ gridTemplateColumns: '1fr' }}>
+              {/* ── Job readiness checklist (auto-ticks as data is gathered) ── */}
+              <div className="config-card">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <label className="config-label" style={{ margin: 0 }}>Job Readiness</label>
+                  <span style={{ fontSize: '9px', fontFamily: 'var(--mono)', color: 'var(--text-muted)' }}>
+                    Site Intelligence → Engineering → Drafting → Certification
+                  </span>
+                  <span style={{
+                    marginLeft: 'auto', fontSize: '11px', fontFamily: 'var(--mono)', fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+                    color: checklist.readyForHandover ? '#6db87a' : '#e0a35c',
+                    background: checklist.readyForHandover ? 'rgba(109,184,122,0.12)' : 'rgba(224,163,92,0.12)',
+                  }}>
+                    {checklist.readyForHandover ? '✓ Ready for Drafting handover' : `${checklist.handoverOutstanding.length} item(s) before handover`}
+                  </span>
+                </div>
+                {/* Progress bar */}
+                <div style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden', marginBottom: 10 }}>
+                  <div style={{ width: `${checklist.percent}%`, height: '100%', background: 'var(--accent)' }} />
+                </div>
+                <div style={{ fontSize: '9px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', marginBottom: 10 }}>
+                  {checklist.doneCount}/{checklist.totalCount} complete ({checklist.percent}%) · ticks auto-update as docs are gathered; Drafting + Certification items finalise downstream.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px,1fr))', gap: 10 }}>
+                  {checklist.byStage.map((st) => (
+                    <div key={st.stage} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
+                      <div style={{ fontSize: '9px', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}>
+                        <span>{stageLabel(st.stage)}</span><span>{st.done}/{st.total}</span>
+                      </div>
+                      {st.items.map((it) => {
+                        const mark = it.status === 'done' ? '✓' : it.status === 'na' ? '–' : '○';
+                        const col = it.status === 'done' ? '#6db87a' : it.status === 'na' ? 'var(--text-muted)' : (it.required ? '#e0a35c' : 'var(--text-muted)');
+                        return (
+                          <div key={it.id} title={it.detail || ''} style={{ display: 'flex', gap: 6, fontSize: '10px', fontFamily: 'var(--mono)', lineHeight: 1.6, color: 'var(--text)' }}>
+                            <span style={{ color: col, fontWeight: 700, width: 10 }}>{mark}</span>
+                            <span style={{ color: it.status === 'todo' && it.required ? 'var(--text)' : 'var(--text-muted)' }}>
+                              {it.label}{!it.required && <span style={{ color: 'var(--text-muted)' }}> ·opt</span>}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {/* Export submission set */}
               <div className="config-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                 <div>
@@ -2298,6 +2389,11 @@ export default function App() {
                   <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)' }}>
                     {submissionSheets.length} A3 sheets · exports to one multi-page PDF with title blocks
                   </div>
+                  {!checklist.readyForHandover && (
+                    <div style={{ fontSize: '9px', color: '#e0a35c', fontFamily: 'var(--mono)', marginTop: 4 }}>
+                      ⚠ {checklist.handoverOutstanding.length} readiness item(s) outstanding — you can still print.
+                    </div>
+                  )}
                 </div>
                 <button
                   onClick={handleExportPDF}
@@ -2314,6 +2410,11 @@ export default function App() {
                   <label className="config-label" style={{ marginBottom: 2 }}>Design Data → Drafting</label>
                   <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--mono)' }}>
                     Hand the design over as a .designset.json — geometry, sections + checks, schedule and title block. Open it in Drafting to generate & finalise the drawings.
+                  </div>
+                  <div style={{ fontSize: '9px', color: checklist.readyForHandover ? '#6db87a' : '#e0a35c', fontFamily: 'var(--mono)', marginTop: 4 }}>
+                    {checklist.readyForHandover
+                      ? `✓ Ready (${checklist.percent}%) — carries the readiness checklist for Drafting to continue.`
+                      : `⚠ ${checklist.handoverOutstanding.length} item(s) outstanding — handover allowed; the checklist travels with it.`}
                   </div>
                 </div>
                 <button

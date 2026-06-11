@@ -14,11 +14,27 @@ export interface ReviewInputs {
   overrides: MemberOverrides;
   titleBlock: Partial<TitleBlockData>;
   northRotation: number;
+  // Drafting/Certification checklist ticks returned in the handback, so the
+  // progressive checklist keeps its downstream state when re-imported.
+  carriedReadiness?: { id: string; status: 'done' | 'todo' | 'na' }[];
 }
 
 /** Parse + map a handback DesignSet onto Engineering's inputs. Throws on bad input. */
 export function readDesignSetForReview(json: string): ReviewInputs {
   const ds = parseDesignSet(json);
+  // Read the readiness block straight from the raw JSON — the typed parser may
+  // drop unknown keys, but this carried list must survive the round-trip.
+  let carriedReadiness: ReviewInputs['carriedReadiness'];
+  try {
+    const raw = JSON.parse(json) as { results?: { readiness?: { items?: unknown } } };
+    const items = raw?.results?.readiness?.items;
+    if (Array.isArray(items)) {
+      carriedReadiness = items
+        .filter((x): x is { id: string; status: 'done' | 'todo' | 'na' } =>
+          !!x && typeof x.id === 'string' && ['done', 'todo', 'na'].includes(x.status))
+        .map((x) => ({ id: x.id, status: x.status }));
+    }
+  } catch { /* ignore — handback without readiness */ }
   const g = ds.geometry;
   const sec = (role: string) => ds.members.find(m => m.role === role)?.section ?? null;
   const wind = typeof ds.loads?.windUltimateKpa === 'number' ? ds.loads.windUltimateKpa : undefined;
@@ -48,5 +64,6 @@ export function readDesignSetForReview(json: string): ReviewInputs {
     } as MemberOverrides,
     titleBlock: ds.project,
     northRotation: g.northRotation ?? 0,
+    carriedReadiness,
   };
 }

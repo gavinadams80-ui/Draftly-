@@ -259,12 +259,25 @@ interface SiteConstraints {
   connectionLengths?: Record<string, number | null>;  // connection length per side (m)
   aerial?: { imageBase64?: string; url?: string; bbox?: number[] };
   // Stormwater sizing carried from siting → for Drafting's drainage sheet.
+  // LOSSLESS: carries the full storm definition (duration + source) and the
+  // per-downpipe sizing (max roof area + which downpipe is over capacity) that the
+  // earlier summary discarded — the real water-services work done in Intelligence.
   stormwater?: {
     designIntensityMmHr?: number;
     aepPercent?: number;
+    durationMin?: number;            // storm duration the intensity is for
+    source?: string;                 // e.g. "BoM IFD 2016"
     totalCatchmentAreaM2?: number;
     anyOverCapacity?: boolean;
-    downpipes?: { label?: string; capacityLs?: number; servesM2?: number }[];
+    notes?: string;
+    downpipes?: {
+      index?: number;
+      label?: string;
+      capacityLs?: number;
+      servesM2?: number;
+      maxRoofM2?: number;            // max roof area this downpipe can take
+      overCapacity?: boolean;        // this specific downpipe is over capacity
+    }[];
   };
   importedCompliance?: { approved?: boolean; passCount?: number; totalChecks?: number };
   // Site-plan geometry (drawn by Engineering; sent by Intelligence)
@@ -465,14 +478,23 @@ export default function App() {
         ? (comp.totalChecks ?? ((comp.passCount ?? 0) + (comp.failCount ?? 0) + (comp.missingCount ?? 0)))
         : undefined;
 
-      // Stormwater sizing for Drafting's drainage sheet — keep the numbers, drop the polygons.
+      // Stormwater sizing for Drafting's drainage sheet — keep ALL the numbers
+      // (only the catchment polygons are dropped; Drafting redraws those).
       const swSummary = stormwater ? {
         designIntensityMmHr: stormwater.designRainfall?.intensityMmHr,
         aepPercent: stormwater.designRainfall?.aepPercent,
+        durationMin: stormwater.designRainfall?.durationMin,
+        source: stormwater.designRainfall?.source,
         totalCatchmentAreaM2: stormwater.totalCatchmentAreaM2,
         anyOverCapacity: stormwater.anyOverCapacity,
+        notes: stormwater.notes,
         downpipes: (stormwater.dischargePoints ?? []).map(d => ({
-          label: d.downpipe ?? undefined, capacityLs: d.downpipeCapacityLs, servesM2: d.servesM2,
+          index: d.index,
+          label: d.downpipe ?? undefined,
+          capacityLs: d.downpipeCapacityLs,
+          servesM2: d.servesM2,
+          maxRoofM2: d.maxRoofM2,
+          overCapacity: d.overCapacity,
         })),
       } : undefined;
 
@@ -867,6 +889,7 @@ export default function App() {
       hasSetbacks: !!(sc?.setbacks || sc?.offsets),
       hasLotGeometry: !!(sc?.lotPts && sc.lotPts.length >= 3),
       overlaysCount: sc?.overlays?.length ?? 0,
+      hasWaterServices: !!(sc?.stormwater && (sc.stormwater.downpipes?.length || sc.stormwater.totalCatchmentAreaM2)),
       sitingComplianceKnown: !!sc?.importedCompliance,
       heights: { gutter: sc?.gutterHeight !== undefined, fascia: sc?.fasciaHeight !== undefined, ridge: sc?.ridgeHeight !== undefined },
       hasConnectionDetail: !!sc?.connectionSides,
@@ -1315,6 +1338,41 @@ export default function App() {
                   Intelligence notes
                 </span>
                 {siteConstraints.notes}
+              </div>
+            )}
+            {/* Water services / stormwater — the full sizing carried from Intelligence */}
+            {siteConstraints.stormwater && (siteConstraints.stormwater.downpipes?.length || siteConstraints.stormwater.totalCatchmentAreaM2) && (
+              <div style={{ flexBasis: '100%', borderTop: '1px solid rgba(201,168,76,0.25)', paddingTop: 8, marginTop: 4 }}>
+                <div style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--accent)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
+                  Water services {siteConstraints.stormwater.anyOverCapacity && <span style={{ color: '#e06c6c' }}>· ⚠ over capacity</span>}
+                </div>
+                <div style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  Design storm:{' '}
+                  {siteConstraints.stormwater.designIntensityMmHr ?? '—'} mm/hr
+                  {siteConstraints.stormwater.aepPercent !== undefined && ` · ${siteConstraints.stormwater.aepPercent}% AEP`}
+                  {siteConstraints.stormwater.durationMin !== undefined && ` · ${siteConstraints.stormwater.durationMin} min`}
+                  {siteConstraints.stormwater.source && ` · ${siteConstraints.stormwater.source}`}
+                  {siteConstraints.stormwater.totalCatchmentAreaM2 !== undefined && ` · catchment ${siteConstraints.stormwater.totalCatchmentAreaM2} m²`}
+                </div>
+                {!!siteConstraints.stormwater.downpipes?.length && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'auto auto auto auto', gap: '2px 14px', fontSize: '10px', fontFamily: 'var(--mono)', marginTop: 4, maxWidth: 460 }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Downpipe</span>
+                    <span style={{ color: 'var(--text-muted)' }}>Capacity</span>
+                    <span style={{ color: 'var(--text-muted)' }}>Serves</span>
+                    <span style={{ color: 'var(--text-muted)' }}>Max roof</span>
+                    {siteConstraints.stormwater.downpipes.map((d, i) => (
+                      <Fragment key={i}>
+                        <span style={{ color: d.overCapacity ? '#e06c6c' : 'var(--text)' }}>{d.label ?? `DP${i + 1}`}{d.overCapacity ? ' ⚠' : ''}</span>
+                        <span style={{ color: 'var(--text)' }}>{d.capacityLs ?? '—'} L/s</span>
+                        <span style={{ color: 'var(--text)' }}>{d.servesM2 ?? '—'} m²</span>
+                        <span style={{ color: 'var(--text-muted)' }}>{d.maxRoofM2 !== undefined ? `${d.maxRoofM2} m²` : '—'}</span>
+                      </Fragment>
+                    ))}
+                  </div>
+                )}
+                {siteConstraints.stormwater.notes && (
+                  <div style={{ fontSize: '10px', color: 'var(--text)', marginTop: 4, lineHeight: 1.5 }}>{siteConstraints.stormwater.notes}</div>
+                )}
               </div>
             )}
           </div>

@@ -71,12 +71,24 @@ export interface DesignSetSource {
   // Overhang of the existing dwelling gutter (mm) — wall-section set-out for Drafting.
   gutterOverhang?: number;
   // Stormwater sizing for Drafting's drainage sheet (carried from siting).
+  // Carries the full storm definition + per-downpipe sizing so none of the water-
+  // services work done in Intelligence is lost on the way to Drafting.
   drainage?: {
     designIntensityMmHr?: number;
     aepPercent?: number;
+    durationMin?: number;
+    source?: string;
     totalCatchmentAreaM2?: number;
     anyOverCapacity?: boolean;
-    downpipes?: { label?: string; capacityLs?: number; servesM2?: number }[];
+    notes?: string;
+    downpipes?: {
+      index?: number;
+      label?: string;
+      capacityLs?: number;
+      servesM2?: number;
+      maxRoofM2?: number;
+      overCapacity?: boolean;
+    }[];
   };
   // Free-text planning notes the user typed in Intelligence — passed through so
   // Drafting sees them and can answer them on the drawings.
@@ -160,7 +172,12 @@ export function buildDesignSetJSON(src: DesignSetSource): string {
         fasciaHeight: src.heights?.fascia !== undefined ? m(src.heights.fascia) : undefined,
         ridgeHeight: src.heights?.ridge !== undefined ? m(src.heights.ridge) : undefined,
         ...(src.gutterOverhang !== undefined ? { existingGutterOverhangMm: src.gutterOverhang } : {}),
-        // Conform to the lib's DesignDrainage (required fields) — our carried summary is loose.
+        // Two carriers, both from the same source:
+        //  • `drainage` — conforms to the lib's DesignDrainage (required fields) so
+        //    Drafting's existing consumer keeps working.
+        //  • `drainageDetail` — the LOSSLESS set (storm duration + source, per-
+        //    downpipe max roof area + over-capacity, notes) that DesignDrainage has
+        //    no fields for. Carried as an extra key (survives serialization).
         ...(src.drainage ? {
           drainage: {
             designIntensityMmHr: src.drainage.designIntensityMmHr ?? 0,
@@ -171,6 +188,25 @@ export function buildDesignSetJSON(src: DesignSetSource): string {
               label: d.label ?? `DP${i + 1}`,
               capacityLs: d.capacityLs ?? 0,
               servesM2: d.servesM2 ?? 0,
+            })),
+          },
+          drainageDetail: {
+            designRainfall: {
+              intensityMmHr: src.drainage.designIntensityMmHr ?? 0,
+              aepPercent: src.drainage.aepPercent ?? 0,
+              ...(src.drainage.durationMin !== undefined ? { durationMin: src.drainage.durationMin } : {}),
+              ...(src.drainage.source ? { source: src.drainage.source } : {}),
+            },
+            totalCatchmentAreaM2: src.drainage.totalCatchmentAreaM2 ?? 0,
+            anyOverCapacity: src.drainage.anyOverCapacity ?? false,
+            ...(src.drainage.notes ? { notes: src.drainage.notes } : {}),
+            dischargePoints: (src.drainage.downpipes ?? []).map((d, i) => ({
+              index: d.index ?? i + 1,
+              downpipe: d.label ?? `DP${i + 1}`,
+              downpipeCapacityLs: d.capacityLs ?? 0,
+              servesM2: d.servesM2 ?? 0,
+              ...(d.maxRoofM2 !== undefined ? { maxRoofM2: d.maxRoofM2 } : {}),
+              overCapacity: d.overCapacity ?? false,
             })),
           },
         } : {}),

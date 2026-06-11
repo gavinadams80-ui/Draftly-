@@ -82,19 +82,20 @@ shape differs, the schema/import is where to fix it.
 
 ---
 
-## Recommended fixes (Engineering scope)
+## Fixes — status
 
-1. **Make the pass‑through lossless.** Widen `SiteConstraints.stormwater` and the
-   `swSummary` map to keep `durationMin`, `source`, per‑downpipe `maxRoofM2` +
-   `overCapacity`, and `notes`; emit the **full `dischargePoints` shape** in
-   `results.drainage` (see the target shape in the Drafting spec §5).
-2. **Add a `si-water` checklist item** — auto‑ticks when stormwater data is
-   present, so "received from Intelligence" is visible and gated.
-3. **Surface a small drainage summary** in the site panel (intensity/AEP/source,
-   per‑DP capacity vs serves, over‑capacity flags) and a row on the computations
-   sheet.
-4. **Verify the Intelligence emission key/shape** against `StormwaterSchema`
-   (cross‑repo) — the most likely root cause of "nothing arrives".
-
-Items 1–3 are local, low‑risk, and unblock Drafting's drainage sheet; item 4 is
-the cross‑repo confirmation that the data is being emitted where Engineering looks.
+1. **Lossless pass‑through — ✅ DONE.** `SiteConstraints.stormwater` and the
+   `swSummary` import now keep `durationMin`, `source`, per‑downpipe `maxRoofM2` +
+   `overCapacity`, and `notes`. The export emits a lib‑conformant `results.drainage`
+   **plus** a lossless `results.drainageDetail` with the full `dischargePoints`
+   shape (Drafting spec §5).
+2. **`si-water` checklist item — ✅ DONE.** Auto‑ticks when drainage data is
+   present (downpipes or catchment area), so "received from Intelligence" is a
+   visible, gated, required handover item.
+3. **Drainage summary surfaced — ✅ DONE.** The site banner now shows the design
+   storm (intensity/AEP/duration/source/catchment) and a per‑downpipe table
+   (capacity / serves / max roof) with over‑capacity flagged.
+4. **Verify the Intelligence emission key/shape — ⛔ OPEN (cross‑repo).** Still the
+   most likely root cause of "nothing arrives": confirm Intelligence emits
+   stormwater under `boundaries.stormwater` / `engineeringPackage.stormwater`
+   matching `StormwaterSchema`. Drop a real export here and we'll diff it.

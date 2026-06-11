@@ -29,6 +29,7 @@ export interface ChecklistState {
   hasSetbacks: boolean;       // required setbacks OR measured offsets present
   hasLotGeometry: boolean;    // lot polygon (≥3 pts)
   overlaysCount: number;
+  hasWaterServices: boolean;   // stormwater/drainage sizing received from Intelligence
   sitingComplianceKnown: boolean;
   heights: { gutter: boolean; fascia: boolean; ridge: boolean };
   hasConnectionDetail: boolean;
@@ -73,6 +74,8 @@ export function buildChecklist(s: ChecklistState): ChecklistItem[] {
       detail: s.hasConnectionDetail ? undefined : 'falls back to the attachment type' },
     { id: 'si-overlays', stage: 'intelligence', required: false, label: 'Site overlays identified',
       status: s.hasSite ? 'done' : 'todo', detail: s.overlaysCount > 0 ? `${s.overlaysCount} overlay(s) — review actions` : 'none flagged' },
+    { id: 'si-water', stage: 'intelligence', required: true, label: 'Water services / stormwater sized',
+      status: tick(s.hasWaterServices), detail: s.hasWaterServices ? 'downpipes + catchment received' : 'no drainage data in handoff' },
     { id: 'si-compliance', stage: 'intelligence', required: false, label: 'Siting compliance verdict recorded',
       status: tick(s.sitingComplianceKnown) },
 
@@ -161,20 +164,24 @@ export function runChecklistChecks(): { name: string; pass: boolean; detail: str
   const check = (name: string, pass: boolean, detail = '') => out.push({ name, pass, detail });
 
   // Empty project: nothing gathered → most items todo, not ready for handover.
-  const empty = summariseChecklist(buildChecklist({
+  const emptyItems = buildChecklist({
     hasSite: false, hasSetbacks: false, hasLotGeometry: false, overlaysCount: 0,
-    sitingComplianceKnown: false, heights: { gutter: false, fascia: false, ridge: false },
+    hasWaterServices: false, sitingComplianceKnown: false, heights: { gutter: false, fascia: false, ridge: false },
     hasConnectionDetail: false, windKpa: 0, dimsSet: false, allMembersPass: false,
     lateralResolved: false, compliance: null, hasComputations: false,
-  }));
+  });
+  const empty = summariseChecklist(emptyItems);
   check('empty project is not ready for handover', !empty.readyForHandover && empty.handoverOutstanding.length > 0,
     `${empty.handoverOutstanding.length} outstanding`);
+  check('water services is a tracked, outstanding item when absent',
+    empty.handoverOutstanding.some((i) => i.id === 'si-water'),
+    emptyItems.find((i) => i.id === 'si-water')?.status ?? 'missing');
 
   // Fully gathered + engineered: stages 1–2 satisfied → ready to hand over,
   // but the whole pipeline isn't done (Drafting + Certification still todo).
   const ready = summariseChecklist(buildChecklist({
     hasSite: true, address: '1 Test St', council: 'Test Shire', zone: 'GRZ', maxHeight: 5,
-    hasSetbacks: true, hasLotGeometry: true, overlaysCount: 1, sitingComplianceKnown: true,
+    hasSetbacks: true, hasLotGeometry: true, overlaysCount: 1, hasWaterServices: true, sitingComplianceKnown: true,
     heights: { gutter: true, fascia: true, ridge: true }, hasConnectionDetail: true,
     windKpa: 0.74, dimsSet: true, allMembersPass: true, lateralResolved: true,
     compliance: { assessable: 4, failCount: 0 }, hasComputations: true,
@@ -186,7 +193,7 @@ export function runChecklistChecks(): { name: string; pass: boolean; detail: str
   // A failing member un-ticks the engineering gate.
   const fail = summariseChecklist(buildChecklist({
     hasSite: true, address: 'x', council: 'c', zone: 'z', maxHeight: 5, hasSetbacks: true, hasLotGeometry: true,
-    overlaysCount: 0, sitingComplianceKnown: true, heights: { gutter: true, fascia: false, ridge: true },
+    overlaysCount: 0, hasWaterServices: true, sitingComplianceKnown: true, heights: { gutter: true, fascia: false, ridge: true },
     hasConnectionDetail: true, windKpa: 0.74, dimsSet: true, allMembersPass: false, lateralResolved: true,
     compliance: { assessable: 4, failCount: 0 }, hasComputations: true,
   }));
@@ -196,7 +203,7 @@ export function runChecklistChecks(): { name: string; pass: boolean; detail: str
   // Carried Drafting/Certification ticks are merged from a handback.
   const carried = buildChecklist({
     hasSite: true, address: 'x', council: 'c', zone: 'z', maxHeight: 5, hasSetbacks: true, hasLotGeometry: true,
-    overlaysCount: 0, sitingComplianceKnown: true, heights: { gutter: true, fascia: true, ridge: true },
+    overlaysCount: 0, hasWaterServices: true, sitingComplianceKnown: true, heights: { gutter: true, fascia: true, ridge: true },
     hasConnectionDetail: true, windKpa: 0.74, dimsSet: true, allMembersPass: true, lateralResolved: true,
     compliance: { assessable: 4, failCount: 0 }, hasComputations: true,
     carried: [{ id: 'dr-drawings', status: 'done' }, { id: 'ce-surveyor', status: 'done' }],

@@ -95,7 +95,7 @@ designset so the list keeps state across the boundary.
 | `si-heights` | Site Intelligence | Set‑out heights carried (gutter/ridge) | Intelligence → Engineering |
 | `si-attachment` | Site Intelligence | Per‑side dwelling attachment captured | Intelligence → Engineering |
 | `si-overlays` | Site Intelligence | Site overlays identified | Intelligence → Engineering |
-| `si-water` *(proposed §5)* | Site Intelligence | Water services / stormwater sized | Intelligence → Engineering |
+| `si-water` | Site Intelligence | Water services / stormwater sized | Intelligence → Engineering |
 | `si-compliance` | Site Intelligence | Siting compliance verdict recorded | Intelligence → Engineering |
 | `en-dims` | Engineering | Structure dimensions confirmed | Engineering |
 | `en-wind` | Engineering | Design wind pressure set | Engineering |
@@ -137,9 +137,12 @@ calc.
 
 ---
 
-## 5. Water services / drainage (`results.drainage`) — GAP, see review
+## 5. Water services / drainage — two carriers (lossless)
 
-**Current shape emitted by Engineering** (a reduced summary):
+Engineering now emits **both** under `results`:
+
+**`drainage`** — conforms to the lib's `DesignDrainage` so Drafting's existing
+consumer keeps working (reduced summary):
 
 ```jsonc
 "drainage": {
@@ -149,20 +152,12 @@ calc.
 }
 ```
 
-⚠ **This is lossy** and, on the current sample handoff, **empty** — see
-`docs/WATER_SERVICES_REVIEW.md`. The fields Intelligence computes but that are
-currently **dropped** before reaching Drafting:
-
-- `designRainfall.durationMin`, `designRainfall.source` (the storm/ARI definition
-  + reference the sizing is based on),
-- per‑downpipe `maxRoofM2` and per‑downpipe `overCapacity` (only an aggregate
-  `anyOverCapacity` survives),
-- discharge‑point `index`, and any `notes`.
-
-**Recommended target shape** for Drafting's drainage sheet (lossless):
+**`drainageDetail`** — the **lossless** set carrying the storm definition + the
+per‑downpipe sizing (the fields `DesignDrainage` has no room for). **Drafting's
+drainage sheet should read this one.**
 
 ```jsonc
-"drainage": {
+"drainageDetail": {
   "designRainfall": { "intensityMmHr": 0, "aepPercent": 0, "durationMin": 0, "source": "BoM IFD …" },
   "totalCatchmentAreaM2": 0, "anyOverCapacity": false, "notes": "",
   "dischargePoints": [
@@ -171,8 +166,11 @@ currently **dropped** before reaching Drafting:
 }
 ```
 
-Until the loss is fixed, Drafting should treat the drainage block as indicative
-and re‑confirm downpipe sizing against the source data.
+Both are populated from the Intelligence handoff (`boundaries.stormwater` /
+`engineeringPackage.stormwater`). ⚠ **Pre‑condition:** the current sample handoff
+contains **no** stormwater — confirm Intelligence emits it under those keys with
+the `StormwaterSchema` shape, or it arrives empty (see
+`docs/WATER_SERVICES_REVIEW.md`).
 
 ---
 

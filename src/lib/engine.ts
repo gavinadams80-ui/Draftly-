@@ -328,7 +328,8 @@ export function bracingAdvice(opts: {
   attachment: string;
   span: number;       // m
   windKpa: number;
-}): { recommended: BracingType; rationale: string; flyBrace: string | null; longitudinal: string | null } {
+  openSides?: string[];  // faces NOT fixed to the dwelling (from per-side detail)
+}): { recommended: BracingType; rationale: string; flyBrace: string | null; longitudinal: string | null; openSides: string | null } {
   const isRHS = opts.material === 'steel';
   const openFront = OPEN_FRONT_TYPES.includes(opts.buildingType);
   const attached = opts.attachment === 'attached' || opts.attachment === 'three-side';
@@ -361,14 +362,139 @@ export function bracingAdvice(opts: {
     ? `Open-front: the missing front wall removes diaphragm action along the building. Carry longitudinal wind with diagonal cross-bracing in the side/rear walls + roof-plane bracing between frames, or make one or more bays a full moment frame.`
     : null;
 
-  return { recommended, rationale, flyBrace, longitudinal };
+  // When per-side detail is available, the dwelling restrains the attached faces;
+  // only the OPEN faces need a bracing/restraint scheme designed for them.
+  const openSides = opts.openSides && opts.openSides.length
+    ? `Per-side attachment: the dwelling restrains the attached face${attached ? 's' : ''}; brace the open side${opts.openSides.length > 1 ? 's' : ''} (${opts.openSides.join(', ')}) — these carry the full lateral demand in their direction.`
+    : null;
+
+  return { recommended, rationale, flyBrace, longitudinal, openSides };
 }
 
 // ── Bracing factor from attachment ──
+// Coarse, single-scalar restraint keyed off the 3-value enum. Used for the
+// gravity span reduction and as the FALLBACK for lateral demand when no per-side
+// attachment detail is available.
 export function getBracingFactor(attachment: string): number {
   if (attachment === 'three-side') return 0.35;
   if (attachment === 'attached') return 0.55;
   return 1.0;
+}
+
+// ── Lateral restraint from dwelling attachment (per-side) ──
+// The coarse `attachment` enum collapses the real per-face detail the user enters
+// in Intelligence into one number, then applies it equally to both directions.
+// When the handoff supplies WHICH faces fix to the dwelling, resolve the restraint
+// PER DIRECTION. A wall bolted to the rigid dwelling stops the structure
+// translating perpendicular to that wall, so:
+//   • the long eaves walls (front/back, parallel to the ridge) restrain the
+//     TRANSVERSE direction — the portal-frame sway across the span; and
+//   • the gable end walls (left/right) restrain the LONGITUDINAL direction —
+//     racking along the building length.
+// Open (non-attached) sides give no restraint and must be braced. Each factor
+// scales the design wind demand in that direction (1.0 = unrestrained / full).
+export interface LateralRestraint {
+  transverse: number;       // factor on the in-plane (frame-sway) wind demand
+  longitudinal: number;     // factor on the end-wall / longitudinal wind demand
+  attachedSides: string[];  // faces fixed to the dwelling (perSide only)
+  openSides: string[];      // faces that must be braced (perSide only)
+  perSide: boolean;         // true when resolved from real per-side data
+}
+
+// Faces grouped by the bracing direction each one restrains.
+export const TRANSVERSE_SIDES = ['front', 'back'] as const;   // long eaves walls (∥ ridge)
+export const LONGITUDINAL_SIDES = ['left', 'right'] as const; // gable end walls (⊥ ridge)
+const LATERAL_SIDES = [...TRANSVERSE_SIDES, ...LONGITUDINAL_SIDES] as const;
+
+// One restrained wall in a direction ≈ 0.55× demand, both opposite walls ≈ 0.35×
+// — calibrated to the legacy coarse factors for 'attached' and 'three-side' so a
+// single-side attachment keeps the same demand it had before, per direction.
+function pairRestraintFactor(attachedCount: number): number {
+  if (attachedCount >= 2) return 0.35;
+  if (attachedCount === 1) return 0.55;
+  return 1.0;
+}
+
+export function getLateralRestraint(
+  attachment: string,
+  connectionSides?: Record<string, boolean> | null,
+): LateralRestraint {
+  const attached = connectionSides
+    ? LATERAL_SIDES.filter((s) => connectionSides[s])
+    : [];
+  // Per-side detail present and meaningful → resolve each direction independently.
+  if (attached.length > 0) {
+    const tN = TRANSVERSE_SIDES.filter((s) => connectionSides![s]).length;
+    const lN = LONGITUDINAL_SIDES.filter((s) => connectionSides![s]).length;
+    return {
+      transverse: pairRestraintFactor(tN),
+      longitudinal: pairRestraintFactor(lN),
+      attachedSides: attached.slice(),
+      openSides: LATERAL_SIDES.filter((s) => !connectionSides![s]),
+      perSide: true,
+    };
+  }
+  // Fallback: no usable per-side data — apply the coarse enum factor to both
+  // directions (legacy behaviour) so imports without attachmentDetail are unchanged.
+  const f = getBracingFactor(attachment);
+  return { transverse: f, longitudinal: f, attachedSides: [], openSides: [], perSide: false };
+}
+
+// ── Calc self-checks for the per-side lateral restraint ──
+// No test runner in this repo (TS is the correctness gate), so these are pure,
+// deterministic assertions that can be executed standalone (see scripts/) or
+// imported into a future test harness. Each returns {name, pass}.
+export function runLateralRestraintChecks(): { name: string; pass: boolean; detail: string }[] {
+  const out: { name: string; pass: boolean; detail: string }[] = [];
+  const approx = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+  const check = (name: string, pass: boolean, detail = '') => out.push({ name, pass, detail });
+
+  // 1. No per-side data → falls back to the coarse enum, equal in both directions.
+  const free = getLateralRestraint('freestanding');
+  check('freestanding fallback = 1.0 both dirs',
+    approx(free.transverse, 1.0) && approx(free.longitudinal, 1.0) && !free.perSide,
+    `t=${free.transverse} l=${free.longitudinal} perSide=${free.perSide}`);
+  const att = getLateralRestraint('attached');
+  check('attached fallback = 0.55 both dirs',
+    approx(att.transverse, 0.55) && approx(att.longitudinal, 0.55) && !att.perSide,
+    `t=${att.transverse} l=${att.longitudinal}`);
+  const three = getLateralRestraint('three-side');
+  check('three-side fallback = 0.35 both dirs',
+    approx(three.transverse, 0.35) && approx(three.longitudinal, 0.35), `t=${three.transverse} l=${three.longitudinal}`);
+
+  // 2. Empty per-side object → still the coarse fallback (nothing actually attached).
+  const emptyObj = getLateralRestraint('attached', { front: false, back: false, left: false, right: false });
+  check('all-false sides → coarse fallback',
+    !emptyObj.perSide && approx(emptyObj.transverse, 0.55), `perSide=${emptyObj.perSide} t=${emptyObj.transverse}`);
+
+  // 3. Lean-to attached on the BACK long wall only: transverse restrained (0.55),
+  //    longitudinal OPEN (1.0) — the key bug the old single scalar masked.
+  const backOnly = getLateralRestraint('attached', { back: true });
+  check('back-only: transverse 0.55, longitudinal 1.0 (open ends)',
+    approx(backOnly.transverse, 0.55) && approx(backOnly.longitudinal, 1.0) && backOnly.perSide,
+    `t=${backOnly.transverse} l=${backOnly.longitudinal} open=[${backOnly.openSides}]`);
+
+  // 4. Attached on one gable END only: longitudinal restrained, transverse open.
+  const leftOnly = getLateralRestraint('attached', { left: true });
+  check('left-only: transverse 1.0 (open), longitudinal 0.55',
+    approx(leftOnly.transverse, 1.0) && approx(leftOnly.longitudinal, 0.55),
+    `t=${leftOnly.transverse} l=${leftOnly.longitudinal}`);
+
+  // 5. Three-side wrap {back,left,right}: one long wall + both ends.
+  //    Transverse from back (1 wall → 0.55); longitudinal from both ends (→ 0.35).
+  const wrap = getLateralRestraint('three-side', { back: true, left: true, right: true, front: false });
+  check('wrap {back,left,right}: transverse 0.55, longitudinal 0.35',
+    approx(wrap.transverse, 0.55) && approx(wrap.longitudinal, 0.35) &&
+    wrap.openSides.length === 1 && wrap.openSides[0] === 'front',
+    `t=${wrap.transverse} l=${wrap.longitudinal} open=[${wrap.openSides}]`);
+
+  // 6. Both long walls attached → transverse fully restrained (0.35).
+  const bothLong = getLateralRestraint('three-side', { front: true, back: true });
+  check('front+back: transverse 0.35',
+    approx(bothLong.transverse, 0.35) && approx(bothLong.longitudinal, 1.0),
+    `t=${bothLong.transverse} l=${bothLong.longitudinal}`);
+
+  return out;
 }
 
 // ── Roofing profiles ──

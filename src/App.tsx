@@ -6,7 +6,7 @@ import type {
 } from '@/types';
 import {
   calcUtilisation, calcUtilisationCustom, classifySectionForm,
-  formsAvailableIn, lightestPassingForm, getBracingFactor, bracingAdvice,
+  formsAvailableIn, lightestPassingForm, getBracingFactor, getLateralRestraint, bracingAdvice,
   BUILDING_TYPES, MATERIAL_LABELS, STANDARDS,
   ROOFING_PROFILES, getRoofingProfile,
   CLADDING_TYPES, calcGableInfill,
@@ -577,6 +577,12 @@ export default function App() {
   const calc = useMemo(() => {
     const sections = getSectionDB(config.constructionType);
     const bracingFactor = getBracingFactor(config.attachment);
+    // Per-side lateral restraint from the Intelligence handoff: attached faces
+    // restrain their direction (transverse = front/back long walls, longitudinal
+    // = left/right gable ends); open faces carry the full wind demand. Falls back
+    // to the coarse `attachment` enum (applied to both directions) when no per-side
+    // detail was imported, so legacy imports size exactly as before.
+    const restraint = getLateralRestraint(config.attachment, siteConstraints?.connectionSides);
 
     // Actual structural span = brick-to-brick width minus standoff on each side
     const actualSpan = Math.max(0.5, config.width - 2 * (standoff / 1000));
@@ -663,9 +669,11 @@ export default function App() {
     // a braced bay (cross-brace / diaphragm / tie-to-wall) takes it as axial with
     // little sway. Knee braces stiffen the moment frame (≈ half the drift).
     const riseM = (actualSpan / 2) * Math.tan((config.pitch * Math.PI) / 180);
-    // Attachment restrains lateral demand: the dwelling carries a share of the wind
-    // (three-side ≈ ×0.35, attached ≈ ×0.55, freestanding ×1.0 — same factor as span bracing).
-    const H_wind = config.windPressureKpa * frameSpacing * (config.height + riseM / 2) * bracingFactor; // kN at eaves
+    // Attachment restrains lateral demand: a dwelling wall tied to the structure
+    // carries a share of the wind in the direction it restrains. The TRANSVERSE
+    // (frame-sway) demand is reduced by the front/back (long eaves wall) attachment
+    // only — open ends don't help the frames stand up across the span.
+    const H_wind = config.windPressureKpa * frameSpacing * (config.height + riseM / 2) * restraint.transverse; // kN at eaves
     const driftLimitMm = (config.height * 1000) / 150; // h/150 sway limit
     const aM2 = (s: { wt: number }) => Math.max(1e-4, (s.wt || 5) / 7850);
     const colSec = selPost?.sec;
@@ -719,7 +727,9 @@ export default function App() {
     // Wind on the gable end wall is carried back through the roof plane to braced
     // end bays. Size a diagonal end-bay tension brace (frame spacing × eave height).
     const endWallArea = actualSpan * (config.height + riseM / 2); // m²
-    const H_long = config.windPressureKpa * endWallArea * bracingFactor; // kN total longitudinal
+    // LONGITUDINAL demand is reduced only by the left/right (gable end) attachment —
+    // a tie on a gable end restrains racking along the building length.
+    const H_long = config.windPressureKpa * endWallArea * restraint.longitudinal; // kN total longitudinal
     const thetaLong = Math.atan2(config.height, frameSpacing);
     const longBraceForceKN = H_long / Math.cos(thetaLong);
     const longCand = sections.rafters
@@ -803,13 +813,13 @@ export default function App() {
       gableChordResults, gableDropperResults, gableTopChordResults,
       selPost, selBeam, selPurlin, selLedger, selFascia,
       selGableChord, selGableDropper, selGableTopChord,
-      postSpan, frameSpacing, purlinSpacing, bracingFactor, phi,
+      postSpan, frameSpacing, purlinSpacing, bracingFactor, restraint, phi,
       dropperHeight, netDropperH, topChordAxialKN,
       portal,
       lateral, H_wind, driftLimitMm, driftOk, braceForceKN, braceSection, M_columnLat,
       H_long, longBraceForceKN, longBraceSection, braceBayLengthM,
     };
-  }, [config, forms, overrides, selectedProfile]);
+  }, [config, forms, overrides, selectedProfile, siteConstraints?.connectionSides]);
 
   // ── Material take-off & cost ──
   const [ratePerKg, setRatePerKg] = useState(6.5);
@@ -1082,6 +1092,7 @@ export default function App() {
     attachment: config.attachment,
     span: Math.max(0.5, config.width - 2 * (standoff / 1000)),
     windKpa: config.windPressureKpa,
+    openSides: calc.restraint.perSide ? calc.restraint.openSides : undefined,
   });
 
   // Check for all-fail condition
@@ -1749,6 +1760,7 @@ export default function App() {
                 <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 6 }}>{brAdvice.rationale}</div>
                 {brAdvice.flyBrace && <div style={{ fontSize: '9px', color: '#c9a84c', lineHeight: 1.5, marginTop: 6, fontFamily: 'var(--mono)' }}>⚑ Fly bracing — {brAdvice.flyBrace}</div>}
                 {brAdvice.longitudinal && <div style={{ fontSize: '9px', color: '#ff9800', lineHeight: 1.5, marginTop: 6, fontFamily: 'var(--mono)' }}>↔ Longitudinal — {brAdvice.longitudinal}</div>}
+                {brAdvice.openSides && <div style={{ fontSize: '9px', color: '#26a69a', lineHeight: 1.5, marginTop: 6, fontFamily: 'var(--mono)' }}>⛬ {brAdvice.openSides}</div>}
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px,1fr))', gap: 8, marginTop: 12 }}>
@@ -1776,6 +1788,16 @@ export default function App() {
               <div style={{ fontSize: '9px', color: '#ff9800', marginTop: 8, fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
                 ↔ Longitudinal: {calc.H_long.toFixed(1)} kN on the end wall → end-bay diagonal brace {calc.longBraceForceKN.toFixed(1)} kN → {calc.longBraceSection ?? 'engineer to specify'} ({calc.braceBayLengthM.toFixed(2)} m diagonal).
               </div>
+              {calc.restraint.perSide ? (
+                <div style={{ fontSize: '9px', color: '#26a69a', marginTop: 8, fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
+                  ⛬ Restraint from dwelling (per-side import): transverse ×{calc.restraint.transverse.toFixed(2)}, longitudinal ×{calc.restraint.longitudinal.toFixed(2)}.
+                  {' '}Attached: {calc.restraint.attachedSides.length ? calc.restraint.attachedSides.join(', ') : 'none'} · Open (braced): {calc.restraint.openSides.length ? calc.restraint.openSides.join(', ') : 'none'}.
+                </div>
+              ) : (
+                <div style={{ fontSize: '9px', color: 'var(--text-muted)', marginTop: 8, fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
+                  ⛬ Restraint from dwelling: ×{calc.restraint.transverse.toFixed(2)} both directions (from "{config.attachment}" — import per-side attachment detail for a directional split).
+                </div>
+              )}
               {calc.lateral && !calc.driftOk && (
                 <div style={{ fontSize: '9px', color: '#f44336', marginTop: 8, fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
                   ⚠ Sway {calc.lateral.swayMm.toFixed(0)}mm exceeds h/150 = {calc.driftLimitMm.toFixed(0)}mm — stiffen the columns (larger section / fixed base) or add bracing.

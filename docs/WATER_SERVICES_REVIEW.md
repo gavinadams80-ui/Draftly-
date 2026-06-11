@@ -95,7 +95,12 @@ shape differs, the schema/import is where to fix it.
 3. **Drainage summary surfaced — ✅ DONE.** The site banner now shows the design
    storm (intensity/AEP/duration/source/catchment) and a per‑downpipe table
    (capacity / serves / max roof) with over‑capacity flagged.
-4. **Verify the Intelligence emission key/shape — ⛔ OPEN (cross‑repo).** Still the
-   most likely root cause of "nothing arrives": confirm Intelligence emits
-   stormwater under `boundaries.stormwater` / `engineeringPackage.stormwater`
-   matching `StormwaterSchema`. Drop a real export here and we'll diff it.
+4. **Verify the Intelligence emission key/shape — ✅ RESOLVED.** Read
+   `Draftly-Intelligence/client/js/app.js`: stormwater IS emitted under **both**
+   `boundaries.stormwater` (~L2769) and `engineeringPackage.stormwater` (~L2845),
+   and the shape **matches `StormwaterSchema`** (designRainfall {intensity, aep,
+   durationMin, source} · dischargePoints[{index, downpipe, downpipeCapacityLs,
+   servesM2, maxRoofM2, overCapacity}] · totalCatchmentAreaM2 · anyOverCapacity ·
+   notes). The earlier "sample has none" was a **stale sample**, not a mismatch —
+   with a current export, water services flows (now losslessly). Proven by the
+   canonical `sample-site-export-full.json` + `npm run check:handoff` (6/6).

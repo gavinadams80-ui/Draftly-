@@ -121,9 +121,19 @@ Electrical/lighting now flows the same lossless way water does:
    - `ce-electrical` (Certification) — ***Electrical safety certificate (CES/CCEW)*** —
      the licensed electrician's sign‑off, alongside surveyor + engineer; required
      only when there's electrical work.
-4. **Drafting — ⛔ (downstream)** the electrical layout sheet + the mandatory
-   "licensed electrician / certificate required" notes; ticks `dr-electrical` and
-   `ce-electrical` back in `results.readiness.items`.
+4. **Drafting — ✅ tick-back BUILT (branch `claude/readiness-tickback`)** the
+   handover checklist surfaces in the File menu; the draughtsperson ticks
+   `dr-electrical`/`ce-electrical` (+ the other dr-/ce- items) and the hand-back
+   re-injects `results.readiness` + `electrical` + `drainageDetail` so Engineering
+   merges the ticks. ⛔ remaining: the auto-generated electrical **layout sheet**
+   (a tracer-rendered drawing) — currently drawn manually by the draughtsperson.
+
+**Intelligence emit — ✅ BUILT (branch `claude/electrical-lighting-capture`)**: the
+Step-3 Electrical & lighting panel captures the scope and emits the `electrical`
+block under `boundaries.electrical` + `engineeringPackage.electrical`.
+
+> Both cross-repo branches are pushed (NOT merged to main, which auto-deploys) and
+> want a live click-through before merge.
 
 This keeps the **legal reality front‑and‑centre**: Draftly *documents and
 coordinates* the lighting, but the licensed electrician *designs, installs and

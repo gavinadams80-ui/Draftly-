@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "check:lateral": "node scripts/check-lateral.mjs"
+    "check:lateral": "node scripts/check-lateral.mjs",
+    "check:handoff": "node scripts/check-handoff.mjs"
   },
   "dependencies": {
     "@draftly/drawings": "github:gavinadams80-ui/Draftly-Drawings#v0.10.0",

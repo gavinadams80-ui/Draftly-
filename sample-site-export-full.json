@@ -1,0 +1,102 @@
+{
+  "_comment": "Canonical FULL Intelligence → Engineering handoff fixture. Demonstrates the complete contract incl. water services (stormwater) and electrical/lighting. The stormwater shape mirrors what Draftly-Intelligence/client/js/app.js already emits (boundaries.stormwater + engineeringPackage.stormwater); the electrical block is the proposed addition Intelligence needs to emit. Used by scripts/check-handoff.mjs.",
+  "site": {
+    "fullAddress": "12 Example Street, Sampletown VIC 3000",
+    "suburb": "Sampletown",
+    "state": "VIC",
+    "postcode": "3000",
+    "projectType": "patio"
+  },
+  "research": {
+    "council": "Sample Shire Council",
+    "zone": "GRZ",
+    "zone_name": "General Residential Zone",
+    "max_height": 5.0,
+    "site_coverage": 60,
+    "setbacks": { "front": 6.0, "side": 1.0, "rear": 1.0 },
+    "overlays": ["Heritage Overlay HO12"],
+    "confidence": "high"
+  },
+  "boundaries": {
+    "site": {
+      "areaM2": 620,
+      "frontBoundaryIndex": 0,
+      "lotPts": [
+        { "lat": -37.8001, "lng": 144.9001 },
+        { "lat": -37.8001, "lng": 144.9006 },
+        { "lat": -37.8006, "lng": 144.9006 },
+        { "lat": -37.8006, "lng": 144.9001 }
+      ]
+    },
+    "building": {
+      "width": 6.0, "depth": 5.0,
+      "gutterHeight": 2.7, "fasciaHeight": 2.7, "pitch": 10, "ridgeHeight": 3.3, "height": 3.3,
+      "rotationDeg": 92, "roofType": "gable",
+      "existingGutterOverhangMm": 300, "frameStandoffMm": 150
+    },
+    "attachment": "three-side",
+    "attachmentDetail": {
+      "sides": { "back": true, "left": true, "right": true, "front": false },
+      "lengths": { "back": 6.0, "left": 5.0, "right": 5.0, "front": null },
+      "count": 3
+    },
+    "northBearing": 0,
+    "offsets": { "front": 6.5, "rear": 1.2, "left": 1.1, "right": 1.8 },
+    "ridgeBearing": 92.0,
+    "ridge": { "bearing": 92.0, "lengthM": 5.0 },
+    "stormwater": {
+      "designRainfall": { "intensityMmHr": 142, "aepPercent": 5, "durationMin": 5, "source": "BoM IFD 2016" },
+      "dischargePoints": [
+        { "index": 1, "label": "DP1", "downpipe": "100×50 PVC", "downpipeCapacityLs": 2.6, "existingRoofM2": 0, "servesM2": 18, "maxRoofM2": 24, "overCapacity": false },
+        { "index": 2, "label": "DP2", "downpipe": "100×50 PVC", "downpipeCapacityLs": 2.6, "existingRoofM2": 0, "servesM2": 30, "maxRoofM2": 24, "overCapacity": true }
+      ],
+      "totalCatchmentAreaM2": 48,
+      "anyOverCapacity": true,
+      "notes": "DP2 over capacity — upsize to 150×75 or add a third downpipe; confirm legal point of discharge with council."
+    },
+    "electrical": {
+      "scope": "Feature + task lighting to the patio ceiling, switched at the dwelling door.",
+      "supply": { "phases": 1, "existingBoardSpareWays": 2, "needsUpgrade": false },
+      "luminaires": [
+        { "type": "LED batten", "ip": "IP65", "qty": 4, "location": "rafters", "control": "wall switch" },
+        { "type": "Wall light", "ip": "IP44", "qty": 2, "location": "posts", "control": "PIR sensor" }
+      ],
+      "gpos": [ { "qty": 1, "ip": "IP53", "location": "post" } ],
+      "lightSpillConstraint": true,
+      "standardsNote": "All electrical work by a licensed electrician to AS/NZS 3000; CES required (VIC).",
+      "notes": "Heritage overlay — confirm fitting style; AS 4282 light-spill to the rear neighbour."
+    }
+  },
+  "engineeringPackage": {
+    "schemaVersion": "1.1",
+    "structure": { "widthM": 6.0, "depthM": 5.0, "roofType": "gable", "pitchDeg": 10, "gutterHeightM": 2.7, "fasciaHeightM": 2.7, "ridgeHeightM": 3.3, "rotationDeg": 92 },
+    "attachment": { "type": "three-side", "existingGutterOverhangMm": 300, "frameStandoffMm": 150 },
+    "setbacks": { "front": 6.5, "rear": 1.2, "left": 1.1, "right": 1.8 },
+    "stormwater": {
+      "designRainfall": { "intensityMmHr": 142, "aepPercent": 5, "durationMin": 5, "source": "BoM IFD 2016" },
+      "dischargePoints": [
+        { "index": 1, "label": "DP1", "downpipe": "100×50 PVC", "downpipeCapacityLs": 2.6, "servesM2": 18, "maxRoofM2": 24, "overCapacity": false },
+        { "index": 2, "label": "DP2", "downpipe": "100×50 PVC", "downpipeCapacityLs": 2.6, "servesM2": 30, "maxRoofM2": 24, "overCapacity": true }
+      ],
+      "totalCatchmentAreaM2": 48,
+      "anyOverCapacity": true,
+      "notes": "DP2 over capacity — upsize or add a downpipe."
+    },
+    "electrical": {
+      "scope": "Feature + task lighting to the patio ceiling, switched at the dwelling door.",
+      "supply": { "phases": 1, "existingBoardSpareWays": 2, "needsUpgrade": false },
+      "luminaires": [
+        { "type": "LED batten", "ip": "IP65", "qty": 4, "location": "rafters", "control": "wall switch" },
+        { "type": "Wall light", "ip": "IP44", "qty": 2, "location": "posts", "control": "PIR sensor" }
+      ],
+      "gpos": [ { "qty": 1, "ip": "IP53", "location": "post" } ],
+      "lightSpillConstraint": true,
+      "standardsNote": "All electrical work by a licensed electrician to AS/NZS 3000; CES required (VIC).",
+      "notes": "AS 4282 light-spill to the rear neighbour."
+    },
+    "ready": true
+  },
+  "compliance": { "approved": true, "passCount": 5, "failCount": 0, "missingCount": 0 },
+  "status": "ready-for-engineering",
+  "version": "1.4.0"
+}

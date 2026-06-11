@@ -1215,6 +1215,14 @@ export default function App() {
   // Form-aware labels
   const formTag = (f: MemberForm) => f === 'rhs' ? 'RHS' : f === 'plate' ? 'C+PLATE' : f === 'b2b' ? 'B2B' : 'C open';
   const isPortalFrame = config.intermediateFrame === 'portal';
+  // Roof form of the intermediate frame — the portal analysis models a symmetric
+  // gable apex, so the frame section names the form (and flags a mono-pitch).
+  const roofWord = config.roofType === 'gable' ? 'Gable'
+    : config.roofType === 'skillion' ? 'Skillion'
+    : config.roofType === 'flat' ? 'Flat'
+    : config.roofType === 'hip' ? 'Hip'
+    : 'Open';
+  const isGableRoof = config.roofType === 'gable';
   const purlinLabel = `PURLIN (${formTag(forms.purlin)})`;
   const postLabel = `${isPortalFrame ? 'PORTAL COLUMN' : 'COLUMN'} (${formTag(forms.post)})`;
   const beamLabel = `${isPortalFrame ? 'PORTAL RAFTER' : isPortal ? 'RAFTER' : 'BEAM'} (${formTag(forms.beam)})`;
@@ -1851,6 +1859,7 @@ export default function App() {
             <div style={{ marginBottom: 12, border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', background: 'var(--surface2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Intermediate frame</span>
+                <span title="Roof form of the repeated intermediate frames" style={{ fontSize: '9px', fontFamily: 'var(--mono)', fontWeight: 700, color: '#c9a84c', background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.35)', borderRadius: 4, padding: '2px 6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{roofWord}</span>
                 <div style={{ display: 'flex', gap: 4 }}>
                   {([['tied-rafter', 'Tied rafter'], ['portal', 'Portal frame']] as const).map(([val, lbl]) => (
                     <button key={val} onClick={() => updateConfig({ intermediateFrame: val })}
@@ -1882,11 +1891,16 @@ export default function App() {
 
               <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 10 }}>
                 {isPortalFrame ? (
-                  <><strong style={{ color: 'var(--text)' }}>Portal frame —</strong> columns and rafters are rigidly connected at the knees with no bottom chord. The frame resists spread by bending: a hogging knee moment develops, runs down the columns, and the base takes horizontal thrust. The columns carry real moment and the frame can sway. Sized from a frame analysis, not a simple span.</>
+                  <><strong style={{ color: 'var(--text)' }}>{roofWord} portal frame —</strong> {isGableRoof ? 'two rafters meet at a central ridge (apex) and ' : ''}columns and rafters are rigidly connected at the knees with no bottom chord. The frame resists spread by bending: a hogging knee moment develops, runs down the columns, and the base takes horizontal thrust. The columns carry real moment and the frame can sway. Sized from a frame analysis, not a simple span.</>
                 ) : (
-                  <><strong style={{ color: 'var(--text)' }}>Tied rafter —</strong> rafters are tied at the bottom by a chord (truss). The tie carries the horizontal thrust as tension; the rafters act as top chords in compression and the columns stay essentially axial. No spread at the base.</>
+                  <><strong style={{ color: 'var(--text)' }}>{roofWord} tied rafter —</strong> {isGableRoof ? 'the two rafters meet at the ridge and are ' : 'rafters are '}tied at the bottom by a chord (truss). The tie carries the horizontal thrust as tension; the rafters act as top chords in compression and the columns stay essentially axial. No spread at the base.</>
                 )}
               </div>
+              {isPortalFrame && !isGableRoof && config.roofType !== 'flat' && (
+                <div style={{ fontSize: '9px', color: '#e0a35c', marginTop: 6, fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
+                  ⚠ The portal analysis models a symmetric (gable) apex. This roof is <strong>{roofWord.toLowerCase()}</strong> (mono-pitch) — the apex sits at the high eave, so the figures are indicative; confirm the mono-pitch frame geometry.
+                </div>
+              )}
 
               {isPortalFrame && calc.portal && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px,1fr))', gap: 8, marginTop: 12 }}>

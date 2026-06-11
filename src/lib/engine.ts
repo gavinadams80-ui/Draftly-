@@ -440,6 +440,182 @@ export function getLateralRestraint(
   return { transverse: f, longitudinal: f, attachedSides: [], openSides: [], perSide: false };
 }
 
+// ── Plywood ceiling diaphragm ──
+// A structural-ply skin screwed to the underside (bottom flange) of the purlins
+// — ideally back-to-back C purlins, whose twin flanges give a wide flat soffit —
+// forms a horizontal shear diaphragm at ceiling level. Designed by the deep-beam
+// analogy (AS1720.1 / APA diaphragm method): the diaphragm spans between the
+// shear-resisting lines (attached dwelling walls + open-side braced bays),
+// carrying wind from each face as in-plane unit shear. The PANEL-EDGE screw
+// spacing delivers the rated shear; the perimeter purlins act as chords.
+//
+// Inputs are load-factored (windKpa = ultimate net horizontal). The per-side
+// restraint factors scale how much wind each direction actually sheds into the
+// diaphragm (attached faces hand load straight to the dwelling).
+
+// Two ways to transfer the diaphragm shear into the frame:
+//  'screw-fixed'    — ply screwed to the purlin flange; shear goes through the
+//                     FASTENERS (ply bearing / tilt-bearing in thin steel).
+//  'timber-battened'— timber battens packed into the C-channel + a diagonal timber
+//                     cross-brace fill each square; shear goes through timber-on-
+//                     steel BEARING (the square is positively contained). Capacity
+//                     no longer relies on screw shear — a sheared screw doesn't
+//                     release the panel — so a thinner, lighter ply skin can be used.
+export type DiaphragmDetail = 'screw-fixed' | 'timber-battened';
+
+// Design shear per ceiling screw (kN) — a 10g/#14 self-driller fixing ply to a
+// ≤2.4 mm BMT G450 flange, governed by ply bearing / tilt-bearing in the steel.
+// Conservative single value; the engineered output is the EDGE SPACING from it.
+export const CEILING_SCREW_SHEAR_KN = 2.0;
+const CEILING_SCREW = '10g hex self-driller';
+// Design shear per CONTAINED batten (kN) — a timber batten packed across the
+// C-channel bearing against the steel web. Several × a single screw; placeholder
+// governed by timber bearing (confirm against local C-section web bearing).
+export const CONTAINED_FIXING_SHEAR_KN = 8.0;
+// Structural plywood options (mm) with an indicative max diaphragm unit shear
+// (kN/m) sustainable at practical close edge nailing — smallest adequate is picked.
+const PLY_DIAPHRAGM = [
+  { t: 12, vMax: 6 },
+  { t: 15, vMax: 9 },
+  { t: 17, vMax: 12 },
+  { t: 19, vMax: 16 },
+] as const;
+// Thin ply skins for the contained/battened detail — the battens carry the shear,
+// so the ply is only the membrane/closer.
+const PLY_BATTENED = [
+  { t: 7, vMax: 8 },
+  { t: 9, vMax: 12 },
+] as const;
+const PLY_DENSITY_KG_M3 = 600;       // structural plywood
+const TIMBER_DENSITY_KG_M3 = 550;    // batten timber
+const BATTEN_W_M = 0.045, BATTEN_D_M = 0.035; // 45×35 batten cross-section
+const CEILING_INSULATION_KPA = 0.04; // blanket/batt insulation laid on the ply
+
+export interface PlyDiaphragmInput {
+  width: number;        // m — building width (eaves-to-eaves span), W
+  depth: number;        // m — building length along the ridge, D
+  wallHeight: number;   // m — eaves height
+  rise: number;         // m — ridge rise above eaves
+  windKpa: number;      // kPa — ultimate net horizontal wind pressure
+  transverse: number;   // per-side restraint factor on the long-wall (transverse) load
+  longitudinal: number; // per-side restraint factor on the gable-end (longitudinal) load
+  detail?: DiaphragmDetail; // shear-transfer detail (default 'screw-fixed')
+}
+
+export interface PlyDiaphragmResult {
+  detail: DiaphragmDetail;
+  vTransverse: number;    // kN/m — unit shear from wind on a long wall
+  vLongitudinal: number;  // kN/m — unit shear from wind on a gable end
+  vDemand: number;        // kN/m — governing design unit (edge) shear
+  governing: 'transverse' | 'longitudinal';
+  chordForceKN: number;   // kN — governing diaphragm chord (perimeter purlin) axial force
+  plyThicknessMm: number; // recommended ply thickness
+  fixing: string;         // fixing spec (screw or contained batten)
+  perFixingKN: number;    // design shear per fixing/batten used
+  edgeSpacingMm: number;  // required fixing/batten spacing at panel edges (clamped)
+  fieldSpacingMm: number; // internal/field spacing
+  edgeSpacingOk: boolean; // false when the raw requirement is below the practical minimum
+  plyAreaM2: number;      // ceiling plan area of ply
+  screwCount: number;     // total ceiling fixings (estimate)
+  selfWeightKpa: number;  // ply (+ battens) + insulation dead load at ceiling level
+  // Mass head-to-head vs the 12 mm screw-fixed baseline.
+  plyMassKg: number;
+  battenMassKg: number;
+  totalMassKg: number;
+  baseline12mmMassKg: number;
+  massSavingPct: number;  // % lighter than the 12 mm screw-fixed baseline (can be 0/neg)
+  notes: string[];
+}
+
+export function calcPlyCeilingDiaphragm(inp: PlyDiaphragmInput): PlyDiaphragmResult {
+  const detail: DiaphragmDetail = inp.detail ?? 'screw-fixed';
+  const W = Math.max(0.5, inp.width);
+  const D = Math.max(0.5, inp.depth);
+  // Tributary wall height delivered to the ceiling plane = top half of the eaves
+  // wall plus a share of the gable rise.
+  const tribH = Math.max(0.1, inp.wallHeight / 2 + inp.rise / 2);
+
+  // Deep-beam analogy, each direction. w = line load along the span (kN/m);
+  // unit shear v = (w·L/2)/depth-in-load-direction; chord force C = (w·L²/8)/depth.
+  // Transverse: wind on a long wall (length D) spans to the gable-end lines (L=D),
+  // diaphragm depth in the load direction = W.
+  const wT = inp.windKpa * tribH * inp.transverse;          // kN/m along D
+  const vTransverse = (wT * D) / (2 * W);                    // kN/m
+  const cT = (wT * D * D) / (8 * W);                         // kN
+  // Longitudinal: wind on a gable end (length W) spans to the long-wall lines (L=W),
+  // diaphragm depth in the load direction = D.
+  const wL = inp.windKpa * tribH * inp.longitudinal;        // kN/m along W
+  const vLongitudinal = (wL * W) / (2 * D);                  // kN/m
+  const cL = (wL * W * W) / (8 * D);                         // kN
+
+  const governing: 'transverse' | 'longitudinal' = vTransverse >= vLongitudinal ? 'transverse' : 'longitudinal';
+  const vDemand = Math.max(vTransverse, vLongitudinal);
+  const chordForceKN = Math.max(cT, cL);
+
+  const battened = detail === 'timber-battened';
+  // Bearing-governed (contained) capacity is higher and battens space wider than
+  // screws; screw-fixed capacity is lower and edges nail closer.
+  const perFixingKN = battened ? CONTAINED_FIXING_SHEAR_KN : CEILING_SCREW_SHEAR_KN;
+  const fixing = battened ? `45×35 batten (contained) + ${CEILING_SCREW} (out-of-plane only)` : CEILING_SCREW;
+  const minMm = battened ? 100 : 50;     // closest practical spacing
+  const maxMm = battened ? 600 : 300;    // widest sensible spacing
+
+  // Spacing so (fixings/m × Q) ≥ vDemand → s ≤ Q / vDemand.
+  const rawMm = vDemand > 0 ? (perFixingKN / vDemand) * 1000 : maxMm;
+  const edgeSpacingOk = rawMm >= minMm;
+  const clamped = Math.max(minMm, Math.min(maxMm, rawMm));
+  const edgeSpacingMm = Math.floor(clamped / 25) * 25;
+  const fieldSpacingMm = battened ? edgeSpacingMm : Math.min(maxMm, edgeSpacingMm * 2);
+
+  // Ply thickness: smallest panel in the relevant set whose rated capacity covers
+  // the demand. Battened uses thin (7/9 mm) skins — the battens carry the shear.
+  const plySet = battened ? PLY_BATTENED : PLY_DIAPHRAGM;
+  const ply = plySet.find((p) => p.vMax >= vDemand) ?? plySet[plySet.length - 1];
+  const plyThicknessMm = ply.t;
+
+  const plyAreaM2 = W * D;
+  const sheetW = 1.2, sheetL = 2.4;
+  const nSheets = Math.ceil(plyAreaM2 / (sheetW * sheetL));
+  const edgePerSheet = Math.ceil((2 * (sheetW + sheetL)) / (edgeSpacingMm / 1000));
+  const fieldPerSheet = Math.ceil((sheetW * sheetL) / Math.pow(fieldSpacingMm / 1000, 2));
+  const screwCount = nSheets * (edgePerSheet + fieldPerSheet);
+
+  // ── Mass head-to-head vs the 12 mm screw-fixed baseline ──
+  const plyMassKg = plyAreaM2 * (plyThicknessMm / 1000) * PLY_DENSITY_KG_M3;
+  // Battens: a diagonal cross-brace pair per ~2.4 m square fills each contained bay.
+  const bay = 2.4, bayDiag = Math.hypot(bay, bay);
+  const nBays = battened ? Math.ceil(plyAreaM2 / (bay * bay)) : 0;
+  const battenLenM = nBays * 2 * bayDiag;
+  const battenMassKg = battenLenM * BATTEN_W_M * BATTEN_D_M * TIMBER_DENSITY_KG_M3;
+  const totalMassKg = plyMassKg + battenMassKg;
+  const baseline12mmMassKg = plyAreaM2 * 0.012 * PLY_DENSITY_KG_M3;
+  const massSavingPct = baseline12mmMassKg > 0 ? ((baseline12mmMassKg - totalMassKg) / baseline12mmMassKg) * 100 : 0;
+
+  const selfWeightKpa = (totalMassKg * 9.81 / 1000) / plyAreaM2 + CEILING_INSULATION_KPA;
+
+  const notes: string[] = [];
+  if (battened) {
+    notes.push(`Pack 45×35 timber battens into the C-channel with a diagonal cross-brace filling each square; shear transfers by timber-on-steel BEARING, so the contained square holds even if a screw shears. Battens at ${edgeSpacingMm} mm; ${plyThicknessMm} mm ply skin closes the panel. Screws retain the panel out-of-plane only.`);
+    notes.push(`Ceiling mass ≈ ${totalMassKg.toFixed(0)} kg (${(totalMassKg / plyAreaM2).toFixed(1)} kg/m²) vs ${baseline12mmMassKg.toFixed(0)} kg for 12 mm screw-fixed ply — ${massSavingPct >= 0 ? `${massSavingPct.toFixed(0)}% lighter` : `${(-massSavingPct).toFixed(0)}% heavier`}.`);
+    notes.push(`Pack battens tight and allow for timber shrinkage (gap = slip); check LOCAL C-section web bearing against the batten thrust — the thin steel can govern, not the timber. Keep battens dry behind the sarking; consider termite/durability.`);
+  } else {
+    notes.push(`Fix ${plyThicknessMm} mm structural ply to the purlin bottom flanges; ${CEILING_SCREW} at ${edgeSpacingMm} mm panel edges / ${fieldSpacingMm} mm field.`);
+  }
+  notes.push(`Perimeter purlins act as diaphragm chords — carry ${chordForceKN.toFixed(1)} kN axial; provide continuous/spliced edge members and collect into the braced lines.`);
+  notes.push(`Lay insulation over the ply with a vapour-control sarking falling to the gutter to drain condensation off the cold roof.`);
+  if (!edgeSpacingOk) {
+    notes.push(`⚠ Required ${battened ? 'batten' : 'edge'} spacing ${rawMm.toFixed(0)} mm is below the ${minMm} mm practical minimum — ${battened ? 'add battens / thicken the skin / add a braced bay' : 'increase ply thickness, use a heavier screw, close the purlin spacing, or add a braced bay'}.`);
+  }
+
+  return {
+    detail, vTransverse, vLongitudinal, vDemand, governing, chordForceKN,
+    plyThicknessMm, fixing, perFixingKN, edgeSpacingMm, fieldSpacingMm, edgeSpacingOk,
+    plyAreaM2, screwCount, selfWeightKpa,
+    plyMassKg, battenMassKg, totalMassKg, baseline12mmMassKg, massSavingPct,
+    notes,
+  };
+}
+
 // ── Calc self-checks for the per-side lateral restraint ──
 // No test runner in this repo (TS is the correctness gate), so these are pure,
 // deterministic assertions that can be executed standalone (see scripts/) or
@@ -493,6 +669,59 @@ export function runLateralRestraintChecks(): { name: string; pass: boolean; deta
   check('front+back: transverse 0.35',
     approx(bothLong.transverse, 0.35) && approx(bothLong.longitudinal, 1.0),
     `t=${bothLong.transverse} l=${bothLong.longitudinal}`);
+
+  return out;
+}
+
+// ── Calc self-checks for the plywood ceiling diaphragm ──
+export function runPlyDiaphragmChecks(): { name: string; pass: boolean; detail: string }[] {
+  const out: { name: string; pass: boolean; detail: string }[] = [];
+  const approx = (a: number, b: number, tol = 1e-6) => Math.abs(a - b) < tol;
+  const check = (name: string, pass: boolean, detail = '') => out.push({ name, pass, detail });
+
+  // A. Typical open structure, round numbers (W=8, D=6, h=3, flat, wind 1.0, no restraint).
+  //    vT = (1.5·6)/(2·8)=0.5625; vL = (1.5·8)/(2·6)=1.0 → longitudinal governs.
+  const a = calcPlyCeilingDiaphragm({ width: 8, depth: 6, wallHeight: 3, rise: 0, windKpa: 1.0, transverse: 1, longitudinal: 1 });
+  check('A: unit shears & governing direction',
+    approx(a.vTransverse, 0.5625) && approx(a.vLongitudinal, 1.0) && a.governing === 'longitudinal' && approx(a.vDemand, 1.0),
+    `vT=${a.vTransverse} vL=${a.vLongitudinal} gov=${a.governing}`);
+  check('A: chord force = max(0.844, 2.0) = 2.0 kN',
+    approx(a.chordForceKN, 2.0, 1e-6), `c=${a.chordForceKN}`);
+  check('A: light demand → 12 mm ply, 300 mm edges, ok',
+    a.plyThicknessMm === 12 && a.edgeSpacingMm === 300 && a.edgeSpacingOk,
+    `t=${a.plyThicknessMm} edge=${a.edgeSpacingMm} ok=${a.edgeSpacingOk}`);
+
+  // B. Per-side restraint flips the governing direction: attach the gable ends
+  //    (longitudinal ×0.35) and the long-wall (transverse) case now governs.
+  const b = calcPlyCeilingDiaphragm({ width: 8, depth: 6, wallHeight: 3, rise: 0, windKpa: 1.0, transverse: 1, longitudinal: 0.35 });
+  check('B: gable ends attached → transverse governs',
+    approx(b.vLongitudinal, 0.35) && b.governing === 'transverse' && approx(b.vDemand, 0.5625),
+    `vL=${b.vLongitudinal} gov=${b.governing} vDemand=${b.vDemand}`);
+
+  // C. Extreme demand → below practical edge spacing, thickest ply, flagged not-ok.
+  const c = calcPlyCeilingDiaphragm({ width: 2, depth: 50, wallHeight: 10, rise: 0, windKpa: 5.0, transverse: 1, longitudinal: 1 });
+  check('C: over-demand → 19 mm ply, 50 mm edge clamp, not ok',
+    c.plyThicknessMm === 19 && c.edgeSpacingMm === 50 && !c.edgeSpacingOk,
+    `t=${c.plyThicknessMm} edge=${c.edgeSpacingMm} ok=${c.edgeSpacingOk} v=${c.vDemand.toFixed(1)}`);
+
+  // D. Self-weight is positive and sensible (12 mm ply + insulation ≈ 0.11 kPa).
+  check('D: ceiling self-weight in a sane range',
+    a.selfWeightKpa > 0.08 && a.selfWeightKpa < 0.2, `sw=${a.selfWeightKpa.toFixed(3)} kPa`);
+
+  // E. Timber-battened (contained) detail on the same geometry: thin 7 mm skin,
+  //    battens space wider than screws, and the assembly is lighter than 12 mm ply.
+  const e = calcPlyCeilingDiaphragm({ width: 8, depth: 6, wallHeight: 3, rise: 0, windKpa: 1.0, transverse: 1, longitudinal: 1, detail: 'timber-battened' });
+  check('E: battened → 7 mm ply, 600 mm battens, bearing-governed',
+    e.detail === 'timber-battened' && e.plyThicknessMm === 7 && e.edgeSpacingMm === 600 && approx(e.perFixingKN, 8.0),
+    `t=${e.plyThicknessMm} batten=${e.edgeSpacingMm} Q=${e.perFixingKN}`);
+  check('E: battened assembly lighter than 12 mm screw-fixed baseline',
+    e.totalMassKg < e.baseline12mmMassKg && e.massSavingPct > 15 && e.massSavingPct < 45,
+    `total=${e.totalMassKg.toFixed(0)} base=${e.baseline12mmMassKg.toFixed(0)} saving=${e.massSavingPct.toFixed(0)}%`);
+
+  // F. Containment spaces fixings wider than screw-fixing for identical demand.
+  check('F: contained fixing spacing ≥ screw spacing (same demand)',
+    e.edgeSpacingMm >= a.edgeSpacingMm && e.perFixingKN > CEILING_SCREW_SHEAR_KN,
+    `battened=${e.edgeSpacingMm} screw=${a.edgeSpacingMm}`);
 
   return out;
 }

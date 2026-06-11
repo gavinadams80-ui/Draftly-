@@ -71,7 +71,10 @@ export type BaseFixity = 'pinned' | 'fixed';
 //  'knee-brace'   — diagonal struts at the knees stiffen the frame (reduced sway).
 //  'diaphragm'    — roof/wall sheeting acts as a shear diaphragm; little sway.
 //  'tied-to-wall' — attached structure restrained by the existing dwelling wall.
-export type BracingType = 'moment-frame' | 'cross-brace' | 'knee-brace' | 'diaphragm' | 'tied-to-wall';
+//  'ply-ceiling-diaphragm' — structural plywood screwed to the underside of the
+//                  (back-to-back) purlins forms a designed horizontal ceiling
+//                  diaphragm; sized for in-plane shear + edge fixing.
+export type BracingType = 'moment-frame' | 'cross-brace' | 'knee-brace' | 'diaphragm' | 'tied-to-wall' | 'ply-ceiling-diaphragm';
 
 export interface MemberForms {
   post: MemberForm;

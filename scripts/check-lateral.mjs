@@ -24,8 +24,8 @@ const bundlePath = resolve(tmp, 'engine.mjs');
 writeFileSync(bundlePath, result.outputFiles[0].text);
 
 try {
-  const { runLateralRestraintChecks } = await import(pathToFileURL(bundlePath).href);
-  const checks = runLateralRestraintChecks();
+  const mod = await import(pathToFileURL(bundlePath).href);
+  const checks = [...mod.runLateralRestraintChecks(), ...mod.runPlyDiaphragmChecks()];
   let failed = 0;
   for (const c of checks) {
     const tag = c.pass ? 'PASS' : 'FAIL';

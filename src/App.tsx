@@ -7,6 +7,7 @@ import type {
 import {
   calcUtilisation, calcUtilisationCustom, classifySectionForm,
   formsAvailableIn, lightestPassingForm, getBracingFactor, getLateralRestraint, bracingAdvice,
+  calcPlyCeilingDiaphragm, type PlyDiaphragmResult, type DiaphragmDetail,
   BUILDING_TYPES, MATERIAL_LABELS, STANDARDS,
   ROOFING_PROFILES, getRoofingProfile,
   CLADDING_TYPES, calcGableInfill,
@@ -357,6 +358,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('structure');
   const [selectedCladding, setSelectedCladding] = useState('poly-twin-10');
   const [standoff, setStandoff] = useState(150);        // mm — standoff from house fascia
+  const [diaphragmDetail, setDiaphragmDetail] = useState<DiaphragmDetail>('timber-battened'); // ply ceiling shear-transfer detail
   const [leftSetback, setLeftSetback] = useState(0);    // m — right-side wall stops this far from front (0 = full depth)
   const [rightSetback, setRightSetback] = useState(1.8); // m — right-side wall stops this far from front
   const [titleBlock, setTitleBlock] = useState<TitleBlockData>(DEFAULT_TITLE_BLOCK);
@@ -739,6 +741,19 @@ export default function App() {
     const longBraceSection = longCand ? longCand.s.size : null;
     const braceBayLengthM = Math.hypot(frameSpacing, config.height); // diagonal length
 
+    // ── PLYWOOD CEILING DIAPHRAGM ──
+    // When chosen, the ceiling ply is the shear element (no frame sway). Sized for
+    // the in-plane unit shear from each direction, scaled by the per-side restraint
+    // (attached faces shed their load straight to the dwelling).
+    const plyDiaphragm: PlyDiaphragmResult | null =
+      config.bracing === 'ply-ceiling-diaphragm'
+        ? calcPlyCeilingDiaphragm({
+            width: actualSpan, depth: config.depth, wallHeight: config.height, rise: riseM,
+            windKpa: config.windPressureKpa, transverse: restraint.transverse, longitudinal: restraint.longitudinal,
+            detail: diaphragmDetail,
+          })
+        : null;
+
     // ── PURLIN ── spans between portal frames
     const purlinResults = calcUtilisation(
       sections.rafters, frameSpacing, purlinSpacing, config.constructionType,
@@ -818,8 +833,9 @@ export default function App() {
       portal,
       lateral, H_wind, driftLimitMm, driftOk, braceForceKN, braceSection, M_columnLat,
       H_long, longBraceForceKN, longBraceSection, braceBayLengthM,
+      plyDiaphragm,
     };
-  }, [config, forms, overrides, selectedProfile, siteConstraints?.connectionSides]);
+  }, [config, forms, overrides, selectedProfile, siteConstraints?.connectionSides, diaphragmDetail]);
 
   // ── Material take-off & cost ──
   const [ratePerKg, setRatePerKg] = useState(6.5);
@@ -1718,7 +1734,7 @@ export default function App() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Lateral bracing</span>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  {([['moment-frame', 'Moment frame'], ['cross-brace', 'Cross brace'], ['knee-brace', 'Knee brace'], ['diaphragm', 'Diaphragm'], ['tied-to-wall', 'Tie to wall']] as const).map(([val, lbl]) => (
+                  {([['moment-frame', 'Moment frame'], ['cross-brace', 'Cross brace'], ['knee-brace', 'Knee brace'], ['diaphragm', 'Diaphragm'], ['tied-to-wall', 'Tie to wall'], ['ply-ceiling-diaphragm', 'Ply ceiling']] as const).map(([val, lbl]) => (
                     <button key={val} onClick={() => updateConfig({ bracing: val })}
                       style={{
                         fontSize: '11px', fontFamily: 'var(--mono)', padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
@@ -1742,15 +1758,37 @@ export default function App() {
                   : config.bracing === 'cross-brace' ? <><strong style={{ color: 'var(--text)' }}>Cross brace —</strong> a diagonal tension brace in a bay carries the lateral load as axial force, so the frames barely sway. The brace and its connections / footing drag must be designed.</>
                   : config.bracing === 'knee-brace' ? <><strong style={{ color: 'var(--text)' }}>Knee brace —</strong> diagonal struts at the knees stiffen the frame, roughly halving the drift and knee moment versus a bare moment frame.</>
                   : config.bracing === 'diaphragm' ? <><strong style={{ color: 'var(--text)' }}>Diaphragm —</strong> roof/wall sheeting acts as a shear diaphragm carrying lateral load to the supports; negligible frame sway (verify sheet / fastener shear).</>
+                  : config.bracing === 'ply-ceiling-diaphragm' ? <><strong style={{ color: 'var(--text)' }}>Ply ceiling diaphragm —</strong> a ply skin on the bottom flange of the (back-to-back) purlins forms a horizontal shear plate at ceiling level; negligible frame sway. Sized for in-plane unit shear — either screw-fixed, or timber-battened so the shear goes through bearing in a contained square (lighter, and robust to a sheared screw). Perimeter purlins act as chords; insulation + sarking sit on top, draining to the gutter.</>
                   : <><strong style={{ color: 'var(--text)' }}>Tie to wall —</strong> the attached dwelling wall restrains the structure laterally; negligible sway in that direction (verify the tie connection).</>}
               </div>
+
+              {/* Ply ceiling: shear-transfer detail (screw shear vs contained timber bearing) */}
+              {config.bracing === 'ply-ceiling-diaphragm' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                  <span style={{ fontSize: '9px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Shear detail</span>
+                  {([['screw-fixed', 'Screw-fixed 12mm ply'], ['timber-battened', 'Timber-battened (contained)']] as const).map(([val, lbl]) => (
+                    <button key={val} onClick={() => setDiaphragmDetail(val)}
+                      style={{
+                        fontSize: '10px', fontFamily: 'var(--mono)', padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+                        border: `1px solid ${diaphragmDetail === val ? '#c9a84c' : 'var(--border)'}`,
+                        background: diaphragmDetail === val ? 'rgba(201,168,76,0.15)' : 'transparent',
+                        color: diaphragmDetail === val ? '#c9a84c' : 'var(--text-muted)', fontWeight: diaphragmDetail === val ? 700 : 400,
+                      }}>{lbl}</button>
+                  ))}
+                  {calc.plyDiaphragm && calc.plyDiaphragm.detail === 'timber-battened' && calc.plyDiaphragm.massSavingPct > 0 && (
+                    <span style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: '#4caf50', fontWeight: 700 }}>
+                      ↓ {calc.plyDiaphragm.massSavingPct.toFixed(0)}% lighter than 12mm ply
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Material/openness-aware recommendation */}
               <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 6, background: 'rgba(38,166,154,0.08)', border: '1px solid rgba(38,166,154,0.3)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '9px', color: '#26a69a', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>Recommended</span>
                   <span style={{ fontSize: '11px', color: 'var(--text)', fontFamily: 'var(--mono)', fontWeight: 700 }}>
-                    {({ 'moment-frame': 'Moment frame', 'cross-brace': 'Cross brace', 'knee-brace': 'Knee brace', 'diaphragm': 'Diaphragm', 'tied-to-wall': 'Tie to wall' } as const)[brAdvice.recommended]}
+                    {({ 'moment-frame': 'Moment frame', 'cross-brace': 'Cross brace', 'knee-brace': 'Knee brace', 'diaphragm': 'Diaphragm', 'tied-to-wall': 'Tie to wall', 'ply-ceiling-diaphragm': 'Ply ceiling' } as const)[brAdvice.recommended]}
                   </span>
                   {config.bracing !== brAdvice.recommended && (
                     <button onClick={() => updateConfig({ bracing: brAdvice.recommended })}
@@ -1774,6 +1812,11 @@ export default function App() {
                     { label: 'Brace force (tension)', value: `${calc.braceForceKN.toFixed(1)} kN`, color: '#f44336' },
                     { label: 'Brace section', value: calc.braceSection ?? '— none passes', color: calc.braceSection ? '#4caf50' : '#f44336' },
                     { label: 'Base shear', value: `${calc.H_wind.toFixed(1)} kN`, color: '#9aa' },
+                  ] : config.bracing === 'ply-ceiling-diaphragm' && calc.plyDiaphragm ? [
+                    { label: `Diaphragm shear (${calc.plyDiaphragm.governing})`, value: `${calc.plyDiaphragm.vDemand.toFixed(2)} kN/m`, color: '#2196f3' },
+                    { label: calc.plyDiaphragm.detail === 'timber-battened' ? 'Ply + batten spacing' : 'Ply + edge screws', value: `${calc.plyDiaphragm.plyThicknessMm}mm @ ${calc.plyDiaphragm.edgeSpacingMm}mm`, color: calc.plyDiaphragm.edgeSpacingOk ? '#4caf50' : '#f44336' },
+                    { label: 'Ceiling mass', value: `${calc.plyDiaphragm.totalMassKg.toFixed(0)} kg`, color: '#9aa' },
+                    { label: 'Chord force (perimeter)', value: `${calc.plyDiaphragm.chordForceKN.toFixed(1)} kN`, color: '#ff9800' },
                   ] : [
                     { label: 'Frame sway', value: '≈ 0 (braced)', color: '#4caf50' },
                     { label: 'Lateral carried by', value: config.bracing === 'diaphragm' ? 'sheeting' : 'dwelling wall', color: '#9aa' },
@@ -1796,6 +1839,19 @@ export default function App() {
               ) : (
                 <div style={{ fontSize: '9px', color: 'var(--text-muted)', marginTop: 8, fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
                   ⛬ Restraint from dwelling: ×{calc.restraint.transverse.toFixed(2)} both directions (from "{config.attachment}" — import per-side attachment detail for a directional split).
+                </div>
+              )}
+              {calc.plyDiaphragm && (
+                <div style={{ fontSize: '9px', marginTop: 8, fontFamily: 'var(--mono)', lineHeight: 1.6, color: 'var(--text-muted)', padding: '8px 10px', borderRadius: 6, background: 'rgba(38,166,154,0.06)', border: '1px solid rgba(38,166,154,0.25)' }}>
+                  <div style={{ color: '#26a69a', fontWeight: 700, marginBottom: 4 }}>⌗ Ply ceiling diaphragm</div>
+                  <div>Unit shear: transverse {calc.plyDiaphragm.vTransverse.toFixed(2)} / longitudinal {calc.plyDiaphragm.vLongitudinal.toFixed(2)} kN/m · governs {calc.plyDiaphragm.governing} ({calc.plyDiaphragm.vDemand.toFixed(2)} kN/m).</div>
+                  <div>Ply over ≈ {calc.plyDiaphragm.plyAreaM2.toFixed(1)} m² · ~{calc.plyDiaphragm.screwCount} screws · +{calc.plyDiaphragm.selfWeightKpa.toFixed(2)} kPa dead load on the purlins.</div>
+                  {calc.plyDiaphragm.notes.map((n, i) => (
+                    <div key={i} style={{ marginTop: 3, color: n.startsWith('⚠') ? '#f44336' : 'var(--text-muted)' }}>• {n}</div>
+                  ))}
+                  {forms.purlin !== 'b2b' && (
+                    <div style={{ marginTop: 3, color: '#c9a84c' }}>• Set the purlin form to <strong>2C back-to-back</strong> — the twin bottom flanges give the flat, continuous soffit this ceiling skin screws to.</div>
+                  )}
                 </div>
               )}
               {calc.lateral && !calc.driftOk && (

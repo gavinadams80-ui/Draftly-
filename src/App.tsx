@@ -28,6 +28,7 @@ import {
   generateSideElevationSVG,
 } from '@draftly/drawings';
 import { generateBomSVG } from '@/lib/bomDrawing';
+import { buildComputations, generateComputationsSheetSVGs } from '@/lib/computations';
 import { parseHandoff } from '@/lib/handoffSchema';
 import { checkAsDesigned, summarise } from '@/lib/compliance';
 import { normalizeOverlays, getOverlayGuidance, type NormalizedOverlay } from '@/lib/overlays';
@@ -967,6 +968,33 @@ export default function App() {
         titleBlock, 'Bill of Materials', 'S-009', 1, 1, 'NTS',
       ),
       description: 'Indicative steel take-off and cost estimate from the frame geometry and selected sections, including lateral / longitudinal bracing. Excludes connections, fixings, footings, sheeting and labour.',
+    });
+
+    // ── Structural Computations (S-010+) — the engineer-review calc set ──
+    const compActualSpan = Math.max(0.5, config.width - 2 * (standoff / 1000));
+    const isPortal = config.intermediateFrame === 'portal';
+    const compInput = buildComputations({
+      config, standoff, actualSpan: compActualSpan, frameSpacing: calc.frameSpacing,
+      restraint: calc.restraint,
+      members: [
+        { label: isPortal ? 'Portal column' : 'Post', result: calc.selPost, span: config.height, spacing: 1.5,
+          demandNote: isPortal ? 'portal frame analysis (column knee moment + axial)' : undefined },
+        { label: isPortal ? 'Portal rafter' : 'Rafter / beam', result: calc.selBeam, span: compActualSpan, spacing: 1.5,
+          demandNote: isPortal ? 'portal frame analysis (rafter/knee moment)' : undefined },
+        { label: 'Purlin', result: calc.selPurlin, span: calc.frameSpacing, spacing: calc.purlinSpacing },
+      ],
+      H_wind: calc.H_wind, H_long: calc.H_long, plyDiaphragm: calc.plyDiaphragm,
+    });
+    const compSvgs = generateComputationsSheetSVGs(compInput);
+    compSvgs.forEach((inner, i) => {
+      const num = `S-0${10 + i}`;
+      sheets.push({
+        title: 'Structural Computations', number: num,
+        svg: withTitleBlock(inner, titleBlock, 'Structural Computations', num, i + 1, compSvgs.length, 'NTS'),
+        description: i === 0
+          ? 'Transparent calc set for engineer review — every value shown with its formula and basis (project input, standard, or ASSUMED placeholder to confirm/amend). No hidden assumptions.'
+          : 'Structural computations (continued).',
+      });
     });
 
     return sheets;

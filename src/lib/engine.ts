@@ -17,6 +17,18 @@ export const PHI: Record<string, number> = {
   csection: 0.90,
 };
 
+// ── Lateral-torsional buckling reduction by section form ──
+// Simplified factors applied to the section bending capacity. NB: these are
+// ASSUMED engineering placeholders (real LTB per AS/NZS 4600 §3.3 depends on the
+// unbraced length, end restraints and section geometry) — surfaced in the
+// computations sheet so an engineer can amend them.
+export const LTB_FACTORS = {
+  open: 0.65,   // single open C-section
+  plate: 0.92,  // C boxed with a plate (near-closed)
+  b2b: 0.85,    // two C back-to-back (I-section)
+  rhs: 1.0,     // closed RHS/SHS — no LTB
+} as const;
+
 // ── Classify section form from size string ──
 export function classifySectionForm(size: string): 'open' | 'b2b' | 'rhs' {
   const s = (size || '').toUpperCase().trim();
@@ -126,9 +138,9 @@ export function calcUtilisation(
     const secForm = classifySectionForm(sec.size); // 'open' | 'b2b' | 'rhs'
     const isRHS = secForm === 'rhs';
     let ltbFactor: number;
-    if (isRHS) ltbFactor = 1.0;
-    else if (secForm === 'b2b') ltbFactor = 0.85;
-    else ltbFactor = memberForm === 'plate' ? 0.92 : 0.65; // single C, boxed or open
+    if (isRHS) ltbFactor = LTB_FACTORS.rhs;
+    else if (secForm === 'b2b') ltbFactor = LTB_FACTORS.b2b;
+    else ltbFactor = memberForm === 'plate' ? LTB_FACTORS.plate : LTB_FACTORS.open; // single C, boxed or open
     if (options?.ltbFactor != null && !isRHS) ltbFactor = options.ltbFactor;
 
     const wU = LOAD_KPA_ULTIMATE * spacing;   // kN/m
@@ -202,11 +214,11 @@ export function calcUtilisationCustom(
   if (!sectionList || !sectionList.length) return [];
   const phi = PHI[material] || 0.85;
   const memberForm = options?.memberForm;
-  let formLtb = 1.0;
-  if (memberForm === 'open') formLtb = 0.65;
-  else if (memberForm === 'plate') formLtb = 0.92;
-  else if (memberForm === 'b2b') formLtb = 0.85;
-  else if (memberForm === 'rhs') formLtb = 1.0;
+  let formLtb: number = LTB_FACTORS.rhs;
+  if (memberForm === 'open') formLtb = LTB_FACTORS.open;
+  else if (memberForm === 'plate') formLtb = LTB_FACTORS.plate;
+  else if (memberForm === 'b2b') formLtb = LTB_FACTORS.b2b;
+  else if (memberForm === 'rhs') formLtb = LTB_FACTORS.rhs;
 
   const results: UtilResult[] = [];
   for (const sec of sectionList) {
@@ -374,11 +386,17 @@ export function bracingAdvice(opts: {
 // ── Bracing factor from attachment ──
 // Coarse, single-scalar restraint keyed off the 3-value enum. Used for the
 // gravity span reduction and as the FALLBACK for lateral demand when no per-side
-// attachment detail is available.
+// attachment detail is available. NB: ASSUMED restraint factors — surfaced in the
+// computations sheet for engineer review.
+export const BRACING_FACTORS = {
+  freestanding: 1.0,  // no dwelling restraint
+  attached: 0.55,     // one wall / direction tied to the dwelling
+  threeSide: 0.35,    // wrapped on three sides
+} as const;
 export function getBracingFactor(attachment: string): number {
-  if (attachment === 'three-side') return 0.35;
-  if (attachment === 'attached') return 0.55;
-  return 1.0;
+  if (attachment === 'three-side') return BRACING_FACTORS.threeSide;
+  if (attachment === 'attached') return BRACING_FACTORS.attached;
+  return BRACING_FACTORS.freestanding;
 }
 
 // ── Lateral restraint from dwelling attachment (per-side) ──
@@ -410,9 +428,9 @@ const LATERAL_SIDES = [...TRANSVERSE_SIDES, ...LONGITUDINAL_SIDES] as const;
 // — calibrated to the legacy coarse factors for 'attached' and 'three-side' so a
 // single-side attachment keeps the same demand it had before, per direction.
 function pairRestraintFactor(attachedCount: number): number {
-  if (attachedCount >= 2) return 0.35;
-  if (attachedCount === 1) return 0.55;
-  return 1.0;
+  if (attachedCount >= 2) return BRACING_FACTORS.threeSide;  // both opposite walls tied
+  if (attachedCount === 1) return BRACING_FACTORS.attached;  // one wall tied
+  return BRACING_FACTORS.freestanding;                       // open in this direction
 }
 
 export function getLateralRestraint(
@@ -474,7 +492,8 @@ const CEILING_SCREW = '10g hex self-driller';
 export const CONTAINED_FIXING_SHEAR_KN = 8.0;
 // Structural plywood options (mm) with an indicative max diaphragm unit shear
 // (kN/m) sustainable at practical close edge nailing — smallest adequate is picked.
-const PLY_DIAPHRAGM = [
+// ASSUMED indicative capacities (confirm against APA / AS1720.1 diaphragm tables).
+export const PLY_DIAPHRAGM = [
   { t: 12, vMax: 6 },
   { t: 15, vMax: 9 },
   { t: 17, vMax: 12 },
@@ -482,14 +501,17 @@ const PLY_DIAPHRAGM = [
 ] as const;
 // Thin ply skins for the contained/battened detail — the battens carry the shear,
 // so the ply is only the membrane/closer.
-const PLY_BATTENED = [
+export const PLY_BATTENED = [
   { t: 7, vMax: 8 },
   { t: 9, vMax: 12 },
 ] as const;
-const PLY_DENSITY_KG_M3 = 600;       // structural plywood
-const TIMBER_DENSITY_KG_M3 = 550;    // batten timber
-const BATTEN_W_M = 0.045, BATTEN_D_M = 0.035; // 45×35 batten cross-section
-const CEILING_INSULATION_KPA = 0.04; // blanket/batt insulation laid on the ply
+export const PLY_DENSITY_KG_M3 = 600;       // structural plywood (ASSUMED)
+export const TIMBER_DENSITY_KG_M3 = 550;    // batten timber (ASSUMED)
+export const BATTEN_W_M = 0.045, BATTEN_D_M = 0.035; // 45×35 batten cross-section (ASSUMED)
+export const CEILING_INSULATION_KPA = 0.04; // blanket/batt insulation laid on the ply (ASSUMED)
+// Tributary wall height delivered to the ceiling plane (share of the eaves wall +
+// gable rise reaching the ceiling diaphragm). ASSUMED tributary rule.
+export const CEILING_TRIB_WALL_FRACTION = 0.5;
 
 export interface PlyDiaphragmInput {
   width: number;        // m — building width (eaves-to-eaves span), W
@@ -533,7 +555,7 @@ export function calcPlyCeilingDiaphragm(inp: PlyDiaphragmInput): PlyDiaphragmRes
   const D = Math.max(0.5, inp.depth);
   // Tributary wall height delivered to the ceiling plane = top half of the eaves
   // wall plus a share of the gable rise.
-  const tribH = Math.max(0.1, inp.wallHeight / 2 + inp.rise / 2);
+  const tribH = Math.max(0.1, (inp.wallHeight + inp.rise) * CEILING_TRIB_WALL_FRACTION);
 
   // Deep-beam analogy, each direction. w = line load along the span (kN/m);
   // unit shear v = (w·L/2)/depth-in-load-direction; chord force C = (w·L²/8)/depth.

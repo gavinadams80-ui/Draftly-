@@ -37,6 +37,12 @@ export interface AsDesignedInputs {
 const m  = (v?: number) => (v === undefined ? '—' : `${v.toFixed(2)} m`);
 const m1 = (v?: number) => (v === undefined ? '—' : `${v.toFixed(1)} m`);
 
+// An ESTIMATED setback (Reg 79 / doc-derived, not surveyor-confirmed) clears by a
+// robust margin → a plausible error in the estimate can't flip it, so it's a
+// (still-labelled-estimated) green pass. Within this margin of the line it stays
+// neutral "confirm with surveyor" — on/near the boundary, any small error matters.
+const EST_ROBUST_MARGIN_M = 1.0;
+
 /** Build the as-designed compliance checklist. Side setback applies to both left & right. */
 export function checkAsDesigned(i: AsDesignedInputs): ComplianceCheck[] {
   const checks: ComplianceCheck[] = [];
@@ -88,10 +94,18 @@ export function checkAsDesigned(i: AsDesignedInputs): ComplianceCheck[] {
         note = ok ? 'provisional — within sited build line'
                   : `${(-margin).toFixed(2)} m past provisional line — re-confirm siting`;
       } else if (estimated) {
-        // Meets the estimated minimum → neutral (not a confirmed green); short → flag.
-        pass = ok ? null : false;
-        note = ok ? `${margin.toFixed(2)} m clearance · estimated, confirm with surveyor`
-                  : `${(-margin).toFixed(2)} m short of estimated setback — confirm with surveyor`;
+        // Tiered on the margin: comfortably inside → robust green pass (still
+        // labelled estimated); on/near the line → neutral "confirm"; short → fail.
+        if (!ok) {
+          pass = false;
+          note = `${(-margin).toFixed(2)} m short of the estimated setback — confirm with surveyor`;
+        } else if (margin >= EST_ROBUST_MARGIN_M) {
+          pass = true;
+          note = `${margin.toFixed(2)} m clearance — well inside (estimated; confirm at survey)`;
+        } else {
+          pass = null;
+          note = `only ${margin.toFixed(2)} m over the estimated setback — close to the line, confirm with surveyor`;
+        }
       } else {
         pass = ok;
         note = margin >= 0 ? `${margin.toFixed(2)} m clearance` : `${(-margin).toFixed(2)} m short`;

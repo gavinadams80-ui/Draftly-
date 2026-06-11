@@ -92,11 +92,12 @@ dwelling supply.
   - *(other states: their equivalent — confirm.)*
 - **As‑installed** mark‑up if the layout changed on site.
 
-## 7. Proposed wiring into Draftly (mirrors the water‑services pattern)
+## 7. Wiring into Draftly (mirrors the water‑services pattern) — ✅ BUILT (Engineering side)
 
-To carry electrical/lighting the same lossless way water now is:
+Electrical/lighting now flows the same lossless way water does:
 
-1. **Handoff schema** — add an `electrical` block to `handoffSchema.ts`, e.g.:
+1. **Handoff schema — ✅** `ElectricalSchema` added to `handoffSchema.ts`, read from
+   `engineeringPackage.electrical` **or** `boundaries.electrical`. Shape:
    ```jsonc
    "electrical": {
      "scope": "feature + task lighting to patio",
@@ -108,17 +109,21 @@ To carry electrical/lighting the same lossless way water now is:
      "notes": ""
    }
    ```
-2. **Engineering** — carry it through `siteConstraints.electrical` → the designset
-   `results.electrical` (lossless, like `drainageDetail`); add structural
-   provisions (fixing points / penetrations) as needed.
-3. **Checklist** — add items mirroring water:
-   - `si-electrical` (Site Intelligence) — *Lighting/electrical scope captured* —
-     auto‑ticks when an `electrical` block is present.
-   - `dr-electrical` (Drafting) — *Electrical layout drawn*.
-   - `ce-electrical` (Certification) — ***Electrical safety certificate issued*** —
-     the licensed electrician's sign‑off, alongside surveyor + engineer.
-4. **Drafting** — the electrical layout sheet + the mandatory "licensed electrician
-   / certificate required" notes.
+2. **Engineering — ✅** carried through `siteConstraints.electrical` → the designset
+   `results.electrical` (lossless), and surfaced in the site banner (scope,
+   luminaires, light‑spill flag, standards note). Structural fixing/penetration
+   provisions remain a manual consideration.
+3. **Checklist — ✅** three items, conditional on lighting being in scope:
+   - `si-electrical` (Site Intelligence) — *Lighting / electrical scope captured* —
+     auto‑ticks when an `electrical` block is present; `na` when there's no lighting.
+   - `dr-electrical` (Drafting) — *Electrical / lighting layout drawn* — required &
+     `todo` only when lighting is in scope, else `na`.
+   - `ce-electrical` (Certification) — ***Electrical safety certificate (CES/CCEW)*** —
+     the licensed electrician's sign‑off, alongside surveyor + engineer; required
+     only when there's electrical work.
+4. **Drafting — ⛔ (downstream)** the electrical layout sheet + the mandatory
+   "licensed electrician / certificate required" notes; ticks `dr-electrical` and
+   `ce-electrical` back in `results.readiness.items`.
 
 This keeps the **legal reality front‑and‑centre**: Draftly *documents and
 coordinates* the lighting, but the licensed electrician *designs, installs and
@@ -135,5 +140,6 @@ certifies* it, and that certificate is a tracked, required item before the job i
 - Decide how much **electrical design** (if any) Draftly should attempt vs leave
   wholly to the electrician — recommendation: **document + coordinate only**, never
   auto‑design circuits.
-- Wire the schema/checklist/sheet items in §7 once the scope is agreed (none built
-  yet — this doc is the map/scope you asked for).
+- The Engineering‑side wiring in §7 is **built**; the **Drafting‑side** electrical
+  layout sheet + `dr-electrical`/`ce-electrical` tick‑back is the remaining
+  (cross‑repo) piece.

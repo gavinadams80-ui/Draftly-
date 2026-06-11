@@ -279,6 +279,17 @@ interface SiteConstraints {
       overCapacity?: boolean;        // this specific downpipe is over capacity
     }[];
   };
+  // Electrical / lighting scope carried from Intelligence → documented by Drafting,
+  // designed/installed/certified by a licensed electrician (see docs).
+  electrical?: {
+    scope?: string;
+    supply?: { phases?: number; existingBoardSpareWays?: number; needsUpgrade?: boolean };
+    luminaires?: { type?: string; ip?: string; qty?: number; location?: string; control?: string }[];
+    gpos?: { qty?: number; ip?: string; location?: string }[];
+    lightSpillConstraint?: boolean;
+    standardsNote?: string;
+    notes?: string;
+  };
   importedCompliance?: { approved?: boolean; passCount?: number; totalChecks?: number };
   // Site-plan geometry (drawn by Engineering; sent by Intelligence)
   lotPts?: LatLng[];
@@ -406,6 +417,7 @@ export default function App() {
       const standoffMm = epa?.frameStandoffMm ?? b.frameStandoffMm;
       const overhangMm = epa?.existingGutterOverhangMm ?? b.existingGutterOverhangMm;
       const stormwater = ep?.stormwater ?? payload.boundaries?.stormwater;
+      const electrical = ep?.electrical ?? payload.boundaries?.electrical;
       // Roof/pitch direction, how it connects to the dwelling, and the aerial underlay.
       const ridgeBearing = payload.boundaries?.ridgeBearing ?? payload.boundaries?.ridge?.bearing ?? undefined;
       // Footprint depth-axis bearing (edge 0→1) — paired with the ridge bearing to
@@ -498,6 +510,17 @@ export default function App() {
         })),
       } : undefined;
 
+      // Electrical / lighting scope — carried through verbatim (lossless).
+      const elecSummary = electrical ? {
+        scope: electrical.scope,
+        supply: electrical.supply,
+        luminaires: electrical.luminaires,
+        gpos: electrical.gpos,
+        lightSpillConstraint: electrical.lightSpillConstraint,
+        standardsNote: electrical.standardsNote,
+        notes: electrical.notes,
+      } : undefined;
+
       // Store site constraints — offsets, Intelligence's compliance verdict, the
       // carried set-out (heights/standoff/overhang) and stormwater, all carried through.
       setSiteConstraints({
@@ -521,6 +544,7 @@ export default function App() {
         sitedWidth: width,
         sitedDepth: depth,
         stormwater: swSummary,
+        electrical: elecSummary,
         ridgeBearing: typeof ridgeBearing === 'number' ? ridgeBearing : undefined,
         rotationDeg: typeof rotationDeg === 'number' ? rotationDeg : undefined,
         connectionSides: connDetail?.sides,
@@ -890,6 +914,7 @@ export default function App() {
       hasLotGeometry: !!(sc?.lotPts && sc.lotPts.length >= 3),
       overlaysCount: sc?.overlays?.length ?? 0,
       hasWaterServices: !!(sc?.stormwater && (sc.stormwater.downpipes?.length || sc.stormwater.totalCatchmentAreaM2)),
+      hasElectrical: !!(sc?.electrical && (sc.electrical.scope || sc.electrical.luminaires?.length)),
       sitingComplianceKnown: !!sc?.importedCompliance,
       heights: { gutter: sc?.gutterHeight !== undefined, fascia: sc?.fasciaHeight !== undefined, ridge: sc?.ridgeHeight !== undefined },
       hasConnectionDetail: !!sc?.connectionSides,
@@ -1106,6 +1131,7 @@ export default function App() {
           sides: siteConstraints.connectionSides,
           lengths: siteConstraints.connectionLengths,
         } : undefined,
+        electrical: siteConstraints?.electrical,
         readiness: {
           percent: checklist.percent,
           readyForHandover: checklist.readyForHandover,
@@ -1373,6 +1399,27 @@ export default function App() {
                 {siteConstraints.stormwater.notes && (
                   <div style={{ fontSize: '10px', color: 'var(--text)', marginTop: 4, lineHeight: 1.5 }}>{siteConstraints.stormwater.notes}</div>
                 )}
+              </div>
+            )}
+            {/* Electrical / lighting — scope carried from Intelligence; designed + certified by a licensed electrician */}
+            {siteConstraints.electrical && (siteConstraints.electrical.scope || siteConstraints.electrical.luminaires?.length) && (
+              <div style={{ flexBasis: '100%', borderTop: '1px solid rgba(201,168,76,0.25)', paddingTop: 8, marginTop: 4 }}>
+                <div style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--accent)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
+                  Electrical / lighting {siteConstraints.electrical.lightSpillConstraint && <span style={{ color: '#e0a35c' }}>· ⚠ light-spill (AS 4282)</span>}
+                </div>
+                {siteConstraints.electrical.scope && (
+                  <div style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text)', lineHeight: 1.6 }}>{siteConstraints.electrical.scope}</div>
+                )}
+                {!!siteConstraints.electrical.luminaires?.length && (
+                  <div style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 2 }}>
+                    {siteConstraints.electrical.luminaires.map((l, i) => (
+                      <span key={i}>{i > 0 && ' · '}{l.qty ?? ''}× {l.type ?? 'luminaire'}{l.ip ? ` (${l.ip})` : ''}{l.location ? ` @ ${l.location}` : ''}</span>
+                    ))}
+                  </div>
+                )}
+                <div style={{ fontSize: '9px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 4 }}>
+                  {siteConstraints.electrical.standardsNote || 'All electrical work by a licensed electrician to AS/NZS 3000; safety certificate (CES/CCEW) required.'}
+                </div>
               </div>
             )}
           </div>

@@ -106,6 +106,17 @@ export interface DesignSetSource {
   ridgeBearing?: number;  // deg — ridge line bearing (compass)
   rotationDeg?: number;   // deg — bearing of footprint edge 0→1 (the depth axis), for the ridge-axis resolve
   connection?: { sides?: Record<string, boolean>; lengths?: Record<string, number | null> };
+  // Electrical / lighting scope — carried verbatim so Drafting draws the layout;
+  // a licensed electrician designs/installs/certifies it (see docs).
+  electrical?: {
+    scope?: string;
+    supply?: { phases?: number; existingBoardSpareWays?: number; needsUpgrade?: boolean };
+    luminaires?: { type?: string; ip?: string; qty?: number; location?: string; control?: string }[];
+    gpos?: { qty?: number; ip?: string; location?: string }[];
+    lightSpillConstraint?: boolean;
+    standardsNote?: string;
+    notes?: string;
+  };
   // Progressive handover checklist — carried so Drafting continues ticking the
   // drafting + certification items and the list keeps its state across the boundary.
   readiness?: {
@@ -214,6 +225,7 @@ export function buildDesignSetJSON(src: DesignSetSource): string {
         ...(src.planning ? { planning: src.planning } : {}),
         ...(src.ridgeBearing !== undefined ? { ridgeBearing: src.ridgeBearing } : {}),
         ...(src.connection ? { connection: src.connection } : {}),
+        ...(src.electrical ? { electrical: src.electrical } : {}),
         ...(src.readiness ? { readiness: src.readiness } : {}),
       },
       loads: { windUltimateKpa: c.windPressureKpa },

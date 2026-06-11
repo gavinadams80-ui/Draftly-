@@ -90,6 +90,35 @@ const StormwaterSchema = z.object({
 }).partial();
 export type HandoffStormwater = z.infer<typeof StormwaterSchema>;
 
+// Electrical / lighting scope captured in Intelligence. Draftly documents and
+// coordinates this; a LICENSED ELECTRICIAN designs, installs and certifies it
+// (see docs/ELECTRICAL_LIGHTING_SCOPE.md). Carried so Drafting can draw the
+// layout and the certificate becomes a tracked item.
+const ElectricalSchema = z.object({
+  scope: z.string().optional(),
+  supply: z.object({
+    phases: numish,
+    existingBoardSpareWays: numish,
+    needsUpgrade: z.boolean().optional(),
+  }).partial().optional(),
+  luminaires: z.array(z.object({
+    type: z.string().optional(),
+    ip: z.string().optional(),
+    qty: numish,
+    location: z.string().optional(),
+    control: z.string().optional(),
+  }).partial()).optional(),
+  gpos: z.array(z.object({
+    qty: numish,
+    ip: z.string().optional(),
+    location: z.string().optional(),
+  }).partial()).optional(),
+  lightSpillConstraint: z.boolean().optional(),  // AS 4282 / overlay-driven
+  standardsNote: z.string().optional(),
+  notes: z.string().optional(),
+}).partial();
+export type HandoffElectrical = z.infer<typeof ElectricalSchema>;
+
 // v1.4.0: Intelligence emits a curated `engineeringPackage` — the vetted, ready-
 // to-engineer view (a superset of the loose top-level fields). We prefer it when
 // present and fall back to the legacy `boundaries`/`research` fields otherwise.
@@ -109,6 +138,7 @@ const EngineeringPackageSchema = z.object({
   }).partial().optional(),
   setbacks: OffsetsSchema.optional(),
   stormwater: StormwaterSchema.optional(),
+  electrical: ElectricalSchema.optional(),
   ready: z.boolean().optional(),
 }).partial();
 
@@ -179,6 +209,7 @@ export const HandoffSchema = z.object({
       lengthM: numish,
     }).partial().optional(),
     stormwater: StormwaterSchema.optional(),  // downpipes + catchment sizing from the siting tool
+    electrical: ElectricalSchema.optional(),  // lighting/electrical scope (executed + certified by a licensed electrician)
   }).partial().optional(),
 
   compliance: z.object({

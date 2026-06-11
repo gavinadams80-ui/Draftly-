@@ -30,6 +30,7 @@ export interface ChecklistState {
   hasLotGeometry: boolean;    // lot polygon (≥3 pts)
   overlaysCount: number;
   hasWaterServices: boolean;   // stormwater/drainage sizing received from Intelligence
+  hasElectrical: boolean;      // lighting/electrical scope captured (drives the elec items)
   sitingComplianceKnown: boolean;
   heights: { gutter: boolean; fascia: boolean; ridge: boolean };
   hasConnectionDetail: boolean;
@@ -76,6 +77,9 @@ export function buildChecklist(s: ChecklistState): ChecklistItem[] {
       status: s.hasSite ? 'done' : 'todo', detail: s.overlaysCount > 0 ? `${s.overlaysCount} overlay(s) — review actions` : 'none flagged' },
     { id: 'si-water', stage: 'intelligence', required: true, label: 'Water services / stormwater sized',
       status: tick(s.hasWaterServices), detail: s.hasWaterServices ? 'downpipes + catchment received' : 'no drainage data in handoff' },
+    { id: 'si-electrical', stage: 'intelligence', required: false, label: 'Lighting / electrical scope captured',
+      status: s.hasElectrical ? 'done' : (s.hasSite ? 'na' : 'todo'),
+      detail: s.hasElectrical ? 'scope received — licensed electrician to design/certify' : 'no lighting in scope' },
     { id: 'si-compliance', stage: 'intelligence', required: false, label: 'Siting compliance verdict recorded',
       status: tick(s.sitingComplianceKnown) },
 
@@ -99,11 +103,18 @@ export function buildChecklist(s: ChecklistState): ChecklistItem[] {
     { id: 'dr-connections', stage: 'drafting', required: true, label: 'Connection details finalised', status: 'todo' },
     { id: 'dr-footings', stage: 'drafting', required: true, label: 'Footing / slab detail finalised', status: 'todo' },
     { id: 'dr-drainage', stage: 'drafting', required: false, label: 'Drainage layout finalised', status: 'todo' },
+    // Electrical layout is only relevant (and required) when lighting is in scope.
+    { id: 'dr-electrical', stage: 'drafting', required: s.hasElectrical, label: 'Electrical / lighting layout drawn',
+      status: s.hasElectrical ? 'todo' : 'na' },
 
     // ── 4 · Certification (final issue) ──
     { id: 'ce-print', stage: 'certification', required: true, label: 'Final print issued', status: 'todo' },
     { id: 'ce-surveyor', stage: 'certification', required: true, label: 'Surveyor sign-off', status: 'todo' },
     { id: 'ce-engineer', stage: 'certification', required: true, label: 'Engineer certification', status: 'todo' },
+    // Electrical safety certificate — the licensed electrician's sign-off; only
+    // required when there is electrical work.
+    { id: 'ce-electrical', stage: 'certification', required: s.hasElectrical, label: 'Electrical safety certificate (CES/CCEW)',
+      status: s.hasElectrical ? 'todo' : 'na' },
   ];
 
   // Merge any carried Drafting/Certification ticks from a handback designset.
@@ -166,7 +177,7 @@ export function runChecklistChecks(): { name: string; pass: boolean; detail: str
   // Empty project: nothing gathered → most items todo, not ready for handover.
   const emptyItems = buildChecklist({
     hasSite: false, hasSetbacks: false, hasLotGeometry: false, overlaysCount: 0,
-    hasWaterServices: false, sitingComplianceKnown: false, heights: { gutter: false, fascia: false, ridge: false },
+    hasWaterServices: false, hasElectrical: false, sitingComplianceKnown: false, heights: { gutter: false, fascia: false, ridge: false },
     hasConnectionDetail: false, windKpa: 0, dimsSet: false, allMembersPass: false,
     lateralResolved: false, compliance: null, hasComputations: false,
   });
@@ -176,24 +187,36 @@ export function runChecklistChecks(): { name: string; pass: boolean; detail: str
   check('water services is a tracked, outstanding item when absent',
     empty.handoverOutstanding.some((i) => i.id === 'si-water'),
     emptyItems.find((i) => i.id === 'si-water')?.status ?? 'missing');
+  // No lighting in scope → electrical items are n/a and do NOT block issue.
+  check('electrical items are n/a (not required) when no lighting',
+    emptyItems.find((i) => i.id === 'dr-electrical')?.status === 'na' &&
+    emptyItems.find((i) => i.id === 'ce-electrical')?.status === 'na' &&
+    !empty.requiredOutstanding.some((i) => i.id === 'ce-electrical'),
+    'na');
 
   // Fully gathered + engineered: stages 1–2 satisfied → ready to hand over,
   // but the whole pipeline isn't done (Drafting + Certification still todo).
-  const ready = summariseChecklist(buildChecklist({
+  const readyItems = buildChecklist({
     hasSite: true, address: '1 Test St', council: 'Test Shire', zone: 'GRZ', maxHeight: 5,
-    hasSetbacks: true, hasLotGeometry: true, overlaysCount: 1, hasWaterServices: true, sitingComplianceKnown: true,
+    hasSetbacks: true, hasLotGeometry: true, overlaysCount: 1, hasWaterServices: true, hasElectrical: true, sitingComplianceKnown: true,
     heights: { gutter: true, fascia: true, ridge: true }, hasConnectionDetail: true,
     windKpa: 0.74, dimsSet: true, allMembersPass: true, lateralResolved: true,
     compliance: { assessable: 4, failCount: 0 }, hasComputations: true,
-  }));
+  });
+  const ready = summariseChecklist(readyItems);
   check('fully engineered → ready for handover', ready.readyForHandover, `${ready.handoverOutstanding.length} outstanding`);
   check('pipeline not complete until Drafting + Certification', ready.requiredOutstanding.length > 0 && ready.percent < 100,
     `${ready.percent}% · ${ready.requiredOutstanding.length} required left`);
+  // Lighting in scope → the electrical certificate becomes a required outstanding item.
+  check('lighting in scope → electrical certificate required & outstanding',
+    readyItems.find((i) => i.id === 'ce-electrical')?.required === true &&
+    ready.requiredOutstanding.some((i) => i.id === 'ce-electrical'),
+    readyItems.find((i) => i.id === 'ce-electrical')?.status ?? 'missing');
 
   // A failing member un-ticks the engineering gate.
   const fail = summariseChecklist(buildChecklist({
     hasSite: true, address: 'x', council: 'c', zone: 'z', maxHeight: 5, hasSetbacks: true, hasLotGeometry: true,
-    overlaysCount: 0, hasWaterServices: true, sitingComplianceKnown: true, heights: { gutter: true, fascia: false, ridge: true },
+    overlaysCount: 0, hasWaterServices: true, hasElectrical: false, sitingComplianceKnown: true, heights: { gutter: true, fascia: false, ridge: true },
     hasConnectionDetail: true, windKpa: 0.74, dimsSet: true, allMembersPass: false, lateralResolved: true,
     compliance: { assessable: 4, failCount: 0 }, hasComputations: true,
   }));
@@ -203,7 +226,7 @@ export function runChecklistChecks(): { name: string; pass: boolean; detail: str
   // Carried Drafting/Certification ticks are merged from a handback.
   const carried = buildChecklist({
     hasSite: true, address: 'x', council: 'c', zone: 'z', maxHeight: 5, hasSetbacks: true, hasLotGeometry: true,
-    overlaysCount: 0, hasWaterServices: true, sitingComplianceKnown: true, heights: { gutter: true, fascia: true, ridge: true },
+    overlaysCount: 0, hasWaterServices: true, hasElectrical: false, sitingComplianceKnown: true, heights: { gutter: true, fascia: true, ridge: true },
     hasConnectionDetail: true, windKpa: 0.74, dimsSet: true, allMembersPass: true, lateralResolved: true,
     compliance: { assessable: 4, failCount: 0 }, hasComputations: true,
     carried: [{ id: 'dr-drawings', status: 'done' }, { id: 'ce-surveyor', status: 'done' }],

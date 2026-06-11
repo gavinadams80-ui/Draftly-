@@ -43,6 +43,7 @@ Serialized via the shared `@draftly/drawings` `serializeDesignSet()`. Shape
     "planning":   { "requiredSetbacks": {...}, "provisionalSetbacks": {...}, "maxHeight": 5, "siteCoverage": 50 },
     "ridgeBearing": 92.0,
     "connection": { "sides": {...}, "lengths": {...} },
+    "electrical":  { /* lighting/electrical scope — see ELECTRICAL_LIGHTING_SCOPE.md */ },
     "readiness":  { /* progressive checklist — see §3 */ }
   },
   "loads":    { "windUltimateKpa": 0.74 },
@@ -107,9 +108,14 @@ designset so the list keeps state across the boundary.
 | `dr-connections` | **Drafting** | Connection details finalised | **Drafting** |
 | `dr-footings` | **Drafting** | Footing / slab detail finalised | **Drafting** |
 | `dr-drainage` | **Drafting** | Drainage layout finalised | **Drafting** |
+| `dr-electrical` | **Drafting** | Electrical / lighting layout drawn | **Drafting** *(only when lighting in scope)* |
 | `ce-print` | **Certification** | Final print issued | **Drafting** |
 | `ce-surveyor` | **Certification** | Surveyor sign‑off | **Drafting** |
 | `ce-engineer` | **Certification** | Engineer certification | **Drafting** |
+| `ce-electrical` | **Certification** | Electrical safety certificate (CES/CCEW) | **Drafting / electrician** *(only when lighting in scope)* |
+
+`dr-electrical` and `ce-electrical` are `na` (not required) when no lighting is in
+scope. See `docs/ELECTRICAL_LIGHTING_SCOPE.md`.
 
 **Drafting's job:** present the four items it owns (`dr-*`) plus the three
 certification items (`ce-*`); set each to `done` as the draughtsperson completes

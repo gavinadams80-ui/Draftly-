@@ -969,24 +969,36 @@ export default function App() {
         });
       }
 
-      // Planning-overlays site plan — only when Intelligence carried overlay geometry. Shows each
-      // confirmed overlay clipped to the block, so partial (corner-clipping) coverage is explicit.
-      if (siteConstraints.overlayShapes && siteConstraints.overlayShapes.some((o) => o.rings && o.rings.length)) {
-        const ovSvg = generateOverlaySitePlanSVG({
+      // Planning-overlays site plans. Overlays on one property often OVERLAP, so a single combined
+      // plan muddies them — give each overlay its own clean projection (clipped to the block), plus
+      // a combined overview when there's more than one so the overlaps are still visible at a glance.
+      const ovShapes = (siteConstraints.overlayShapes ?? []).filter((o) => o.rings && o.rings.length);
+      if (ovShapes.length) {
+        const common = {
           lotPts: siteConstraints.lotPts,
-          overlays: siteConstraints.overlayShapes,
           footprint: siteConstraints.footprint,
           frontBoundaryIndex: siteConstraints.frontBoundaryIndex,
           areaM2: siteConstraints.siteAreaM2,
           council: siteConstraints.council,
-        });
-        if (ovSvg) {
+        };
+        // Build the sheet list: an "all overlays" overview first (only when 2+), then one per overlay.
+        const ovSheets: { title: string; overlays: typeof ovShapes; single: (typeof ovShapes)[number] | null }[] = [];
+        if (ovShapes.length > 1) ovSheets.push({ title: 'Site Plan — All Overlays', overlays: ovShapes, single: null });
+        ovShapes.forEach((o) => ovSheets.push({ title: `Site Plan — ${o.code || o.name || 'Overlay'}`, overlays: [o], single: o }));
+
+        ovSheets.forEach((sh, i) => {
+          const svg = generateOverlaySitePlanSVG({ ...common, overlays: sh.overlays });
+          if (!svg) return;
+          const num = `S-000${String.fromCharCode(97 + i)}`; // S-000a, S-000b, …
+          const desc = sh.single
+            ? `${sh.single.name || sh.single.code || 'Overlay'} mapped onto the block, clipped to the lot boundary — ${sh.single.partial ? 'covers only PART of the lot' : 'covers the whole lot'}. Indicative extent; confirm on the planning portal.`
+            : 'All confirmed planning overlays on one plan (overview) — see the per-overlay sheets for each shown clearly. Clipped to the lot boundary; indicative extent.';
           sheets.push({
-            title: 'Site Plan — Planning Overlays', number: 'S-000a',
-            svg: withTitleBlock(ovSvg, titleBlock, 'Site Plan — Planning Overlays', 'S-000a', 1, 1, 'NTS'),
-            description: 'Confirmed planning overlays mapped onto the block, clipped to the lot boundary. Overlays flagged where they cover only part of the lot. Extents are indicative — confirm on the planning portal.',
+            title: sh.title, number: num,
+            svg: withTitleBlock(svg, titleBlock, sh.title, num, 1, 1, 'NTS'),
+            description: desc,
           });
-        }
+        });
       }
     }
 

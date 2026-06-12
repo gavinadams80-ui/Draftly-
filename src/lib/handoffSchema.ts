@@ -77,6 +77,22 @@ const OverlayShapeSchema = z.object({
 }).partial();
 export type HandoffOverlayShape = z.infer<typeof OverlayShapeSchema>;
 
+// Easements / no-build runs carried from the siting tool. Two sources: auto-detected from the
+// authoritative gov easement layer (`research.easements.features`, usually line runs with `coords`)
+// and user-traced polygons (`boundaries.easements`, closed `polygon`s). Both drawn greyed on the plan.
+const EasementFeatureSchema = z.object({
+  kind: z.string().optional(),                 // 'line' | 'polygon'
+  pfi: z.string().nullable().optional(),
+  label: z.string().nullable().optional(),
+  coords: z.array(LatLngSchema).optional(),
+}).partial();
+const EasementPolygonSchema = z.object({
+  index: z.number().optional(),
+  label: z.string().nullable().optional(),
+  polygon: z.array(LatLngSchema).optional(),
+  areaM2: z.number().nullable().optional(),
+}).partial();
+
 // Stormwater set-out the siting tool computes — design rainfall + the downpipes
 // and the catchment they each serve. Carried so Drafting can build the drainage
 // sheet instead of re-deriving it. Catchment polygons are intentionally left out
@@ -179,6 +195,10 @@ export const HandoffSchema = z.object({
     setbacks: SetbacksSchema.optional(),  // required planning setbacks
     setbacks_estimated: z.boolean().optional(),  // true = estimated (Reg 79/doc), not gov-verified → provisional
     overlays: z.array(OverlaySchema).optional(),
+    easements: z.object({                       // auto-detected gov easement runs (Vicmap etc.)
+      source: z.string().optional(),
+      features: z.array(EasementFeatureSchema).optional(),
+    }).partial().nullable().optional(),
     confidence: z.string().optional(),
     source_url: z.string().optional(),
     notes: z.string().optional(),
@@ -229,6 +249,7 @@ export const HandoffSchema = z.object({
     }).partial().optional(),
     stormwater: StormwaterSchema.optional(),  // downpipes + catchment sizing from the siting tool
     electrical: ElectricalSchema.optional(),  // lighting/electrical scope (executed + certified by a licensed electrician)
+    easements: z.array(EasementPolygonSchema).nullable().optional(),  // user-traced no-build polygons
     // Planning overlays the user confirmed, WITH geometry — for the site-plan overlay sheet.
     overlayReview: z.object({
       confirmed: z.array(z.string()).optional(),

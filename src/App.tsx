@@ -299,6 +299,9 @@ interface SiteConstraints {
   // Planning overlays WITH geometry — the overlay polygon(s) intersecting the lot + a
   // partial-coverage flag, so the site plan shows exactly where each overlay sits on the block.
   overlayShapes?: { code?: string; name?: string; type?: string; partial?: boolean; rings?: LatLng[][] }[];
+  // Easements / no-build runs — drawn greyed on the site plan with a marker, so the inspector can
+  // see (and discuss) the registered constraints. `line` = a run; `polygon` = a closed no-build area.
+  easements?: { kind: 'line' | 'polygon'; label?: string; coords: LatLng[] }[];
 }
 
 // Map Intelligence projectType strings → Engineering BuildingType enum
@@ -430,6 +433,24 @@ export default function App() {
       const connDetail = payload.boundaries?.attachmentDetail;
       const aerial = payload.boundaries?.site?.aerial;
 
+      // Easements — merge the auto-detected gov runs (research.easements.features, usually lines)
+      // with any user-traced no-build polygons (boundaries.easements). Both drawn greyed on the plan.
+      const easementList: { kind: 'line' | 'polygon'; label?: string; coords: LatLng[] }[] = [];
+      (payload.research?.easements?.features ?? []).forEach((f) => {
+        if (f.coords && f.coords.length >= 2) {
+          easementList.push({
+            kind: f.kind === 'polygon' ? 'polygon' : 'line',
+            label: f.label ?? (f.pfi ? `Easement ${f.pfi}` : 'Easement'),
+            coords: f.coords,
+          });
+        }
+      });
+      (payload.boundaries?.easements ?? []).forEach((e) => {
+        if (e.polygon && e.polygon.length >= 3) {
+          easementList.push({ kind: 'polygon', label: e.label ?? 'Easement', coords: e.polygon });
+        }
+      });
+
       // Pre-fill dimensions (validator already coerced to numbers)
       const patch: Partial<ProjectConfig> = {};
       const width = eps?.widthM ?? b.width;
@@ -558,12 +579,33 @@ export default function App() {
         footprint: payload.boundaries?.building?.footprint,
         frontBoundaryIndex: payload.boundaries?.site?.frontBoundaryIndex,
         overlayShapes: payload.engineeringPackage?.site?.overlays ?? payload.boundaries?.overlayReview?.shapes,
+        easements: easementList.length ? easementList : undefined,
         importedCompliance: comp ? {
           approved: comp.approved,
           passCount: comp.passCount,
           totalChecks: compTotal,
         } : undefined,
       });
+
+      // GPS/aerial underlay only embeds in the exported PDF as a base64 data-URL — an external
+      // `url` can't be fetched during PDF generation, so a handoff that carried only the url shows
+      // on screen but prints blank. Backfill base64 from the url here (best-effort; CORS-permitting).
+      if (aerial?.url && !aerial.imageBase64) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            const cv = document.createElement('canvas');
+            cv.width = img.naturalWidth || 1024; cv.height = img.naturalHeight || 1024;
+            const ctx = cv.getContext('2d');
+            if (!ctx) return;
+            ctx.drawImage(img, 0, 0, cv.width, cv.height);
+            const dataUrl = cv.toDataURL('image/jpeg', 0.85); // throws if the canvas is CORS-tainted
+            setSiteConstraints((prev) => prev ? { ...prev, aerial: { ...prev.aerial, imageBase64: dataUrl } } : prev);
+          } catch { /* tainted canvas — leave the url-only aerial (screen still shows it) */ }
+        };
+        img.src = aerial.url;
+      }
 
       setActiveTab('structure');
     };
@@ -969,37 +1011,58 @@ export default function App() {
         });
       }
 
-      // Planning-overlays site plans. Overlays on one property often OVERLAP, so a single combined
-      // plan muddies them — give each overlay its own clean projection (clipped to the block), plus
-      // a combined overview when there's more than one so the overlaps are still visible at a glance.
+      // Site-context sheets (S-000a, b, c…): a comprehensive "Setbacks & Easements" plan (aerial
+      // underlay + greyed no-build setback zone + easements) for the inspector, then — because
+      // overlapping overlays muddy a single plan — one clean projection per overlay (plus an "all
+      // overlays" overview when there are 2+). Easements (no-build) carry onto every sheet.
       const ovShapes = (siteConstraints.overlayShapes ?? []).filter((o) => o.rings && o.rings.length);
-      if (ovShapes.length) {
-        const common = {
-          lotPts: siteConstraints.lotPts,
-          footprint: siteConstraints.footprint,
-          frontBoundaryIndex: siteConstraints.frontBoundaryIndex,
-          areaM2: siteConstraints.siteAreaM2,
-          council: siteConstraints.council,
-        };
-        // Build the sheet list: an "all overlays" overview first (only when 2+), then one per overlay.
-        const ovSheets: { title: string; overlays: typeof ovShapes; single: (typeof ovShapes)[number] | null }[] = [];
-        if (ovShapes.length > 1) ovSheets.push({ title: 'Site Plan — All Overlays', overlays: ovShapes, single: null });
-        ovShapes.forEach((o) => ovSheets.push({ title: `Site Plan — ${o.code || o.name || 'Overlay'}`, overlays: [o], single: o }));
+      const eases = siteConstraints.easements;
+      const offs = siteConstraints.offsets;
+      const ab = siteConstraints.aerial;
+      const aerialB64 = (ab?.imageBase64 && ab.bbox && ab.bbox.length === 4)
+        ? { imageBase64: ab.imageBase64, bbox: ab.bbox as [number, number, number, number] } : undefined;
+      const hasOffsets = !!offs && [offs.front, offs.rear, offs.left, offs.right].some((v) => typeof v === 'number' && v > 0);
+      const baseCommon = {
+        lotPts: siteConstraints.lotPts,
+        footprint: siteConstraints.footprint,
+        frontBoundaryIndex: siteConstraints.frontBoundaryIndex,
+        areaM2: siteConstraints.siteAreaM2,
+        council: siteConstraints.council,
+      };
 
-        ovSheets.forEach((sh, i) => {
-          const svg = generateOverlaySitePlanSVG({ ...common, overlays: sh.overlays });
-          if (!svg) return;
-          const num = `S-000${String.fromCharCode(97 + i)}`; // S-000a, S-000b, …
-          const desc = sh.single
-            ? `${sh.single.name || sh.single.code || 'Overlay'} mapped onto the block, clipped to the lot boundary — ${sh.single.partial ? 'covers only PART of the lot' : 'covers the whole lot'}. Indicative extent; confirm on the planning portal.`
-            : 'All confirmed planning overlays on one plan (overview) — see the per-overlay sheets for each shown clearly. Clipped to the lot boundary; indicative extent.';
-          sheets.push({
-            title: sh.title, number: num,
-            svg: withTitleBlock(svg, titleBlock, sh.title, num, 1, 1, 'NTS'),
-            description: desc,
-          });
+      const ctxSheets: { title: string; description: string; build: () => string }[] = [];
+      if ((eases && eases.length) || aerialB64 || hasOffsets) {
+        ctxSheets.push({
+          title: 'Site Plan — Setbacks & Easements',
+          description: 'GPS/aerial context of the block with the proposed structure, the greyed no-build setback zone (from the measured offsets) and any registered easements marked. Indicative — confirm offsets with a surveyor and easements on title before lodging.',
+          build: () => generateOverlaySitePlanSVG({ ...baseCommon, easements: eases, offsets: offs, aerial: aerialB64, legendTitle: 'SITE — SETBACKS & EASEMENTS' }),
         });
       }
+      if (ovShapes.length > 1) {
+        ctxSheets.push({
+          title: 'Site Plan — All Overlays',
+          description: 'All confirmed planning overlays on one plan (overview) — see the per-overlay sheets for each shown clearly. Clipped to the lot boundary; indicative extent.',
+          build: () => generateOverlaySitePlanSVG({ ...baseCommon, overlays: ovShapes, easements: eases }),
+        });
+      }
+      ovShapes.forEach((o) => {
+        ctxSheets.push({
+          title: `Site Plan — ${o.code || o.name || 'Overlay'}`,
+          description: `${o.name || o.code || 'Overlay'} mapped onto the block, clipped to the lot boundary — ${o.partial ? 'covers only PART of the lot' : 'covers the whole lot'}. Indicative extent; confirm on the planning portal.`,
+          build: () => generateOverlaySitePlanSVG({ ...baseCommon, overlays: [o], easements: eases }),
+        });
+      });
+
+      ctxSheets.forEach((c, i) => {
+        const svg = c.build();
+        if (!svg) return;
+        const num = `S-000${String.fromCharCode(97 + i)}`; // S-000a, S-000b, …
+        sheets.push({
+          title: c.title, number: num,
+          svg: withTitleBlock(svg, titleBlock, c.title, num, 1, 1, 'NTS'),
+          description: c.description,
+        });
+      });
     }
 
     const planDesc =

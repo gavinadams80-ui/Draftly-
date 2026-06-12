@@ -23,9 +23,10 @@ import {
   withTitleBlock, DEFAULT_TITLE_BLOCK, type TitleBlockData,
   generateCornerPostSVG, generateRafterLedgerSVG, generateCrossBracingSVG,
   generateSocketJointSVG, generateFasciaPenetrationSVG,
-  generateWallSectionSVG, generateFullElevationSVG,
+  generateFullElevationSVG,
   generateSitePlanSVG, type LatLng,
   generateSideElevationSVG,
+  generateGableFrameModelSVG,
 } from '@draftly/drawings';
 import { generateBomSVG } from '@/lib/bomDrawing';
 import { buildComputations, generateComputationsSheetSVGs } from '@/lib/computations';
@@ -38,6 +39,7 @@ import { generateStormwaterPlanSVG, generateElectricalPlanSVG } from '@/lib/serv
 import type { ExportSheet } from '@/lib/exportPdf';
 import { downloadDesignSet } from '@/lib/designSetExport';
 import { readDesignSetForReview } from '@/lib/designSetReview';
+import { STRUCTURAL_PRESETS } from '@/lib/presets';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -653,6 +655,19 @@ export default function App() {
     setConfig((prev) => ({ ...prev, ...patch }));
   }, []);
 
+  // Apply a saved structural preset: seed config + member forms, clear manual section
+  // overrides so the preset's forms drive sizing, and set the related layout fields.
+  const applyPreset = useCallback((presetId: string) => {
+    const preset = STRUCTURAL_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    setConfig((prev) => ({ ...prev, ...preset.config }));
+    if (preset.forms) setForms((prev) => ({ ...prev, ...preset.forms }));
+    setOverrides({ ...DEFAULT_OVERRIDES, ...(preset.overrides ?? {}) } as MemberOverrides);
+    if (preset.standoffMm != null) setStandoff(preset.standoffMm);
+    if (preset.leftSetback != null) setLeftSetback(preset.leftSetback);
+    if (preset.rightSetback != null) setRightSetback(preset.rightSetback);
+  }, []);
+
   const updateForm = useCallback((member: keyof MemberForms | string, form: string) => {
     setForms((prev) => ({ ...prev, [member]: form }));
   }, []);
@@ -1151,6 +1166,76 @@ export default function App() {
       description: planDesc,
     });
 
+    // ── Frame models — 1:1, real members (one section per frame: A-A, B-B, C-C…) ──
+    // End frames are gable-end tied trusses (RHS infill: rafters + bottom-chord tie +
+    // droppers); interior frames are untied portal moment frames (C + plate rafters &
+    // columns, no tie/droppers). Each sheet has the roof plan projecting to its section.
+    // Member sizes track the engineering pick; no page detail (that moves to a layout tab).
+    if (config.roofType === 'gable' && calc.selBeam?.sec && calc.selPost?.sec && calc.selGableChord?.sec && calc.selGableDropper?.sec) {
+      const nF = config.portalFrameCount;
+      const gableRafter = calc.selGableTopChord?.sec ?? calc.selGableChord.sec;
+      // Existing brick-veneer dwelling walls: the clear span is the gap between inner
+      // brick faces (config.width, which tracks the Intelligence sited width). Fascia +
+      // gutter heights come straight from the Site Intelligence handoff and re-render
+      // whenever that document changes; absent → the wall block uses its own defaults.
+      const attachedToDwelling = config.attachment !== 'freestanding';
+      const wall = attachedToDwelling ? {
+        eaveHeightMm: config.height * 1000,
+        fasciaBottomMm: siteConstraints?.fasciaHeight != null ? siteConstraints.fasciaHeight * 1000 : undefined,
+        fasciaTopMm: siteConstraints?.gutterHeight != null ? siteConstraints.gutterHeight * 1000 : undefined,
+      } : undefined;
+      // Gutter clearance from the Site Intelligence "Existing gutter clearance" panel:
+      //   gutter overhang → existingGutterOverhangMm; frame stand-off (auto = overhang +
+      //   50mm clearance) → the `standoff` state. The rafter starts at the frame stand-off;
+      //   the drawn gutter takes the entered overhang as its projection.
+      const gutterWidthMm = siteConstraints?.existingGutterOverhangMm ?? 115;
+      const rafterOffsetMm = attachedToDwelling ? standoff : 0; // gutter clearance only applies vs a house
+      // Infill droppers wired to the engineering gable-infill detail (panel + dropper layout).
+      const aSpanG = Math.max(0.5, config.width - 2 * (standoff / 1000));
+      const ghG = (aSpanG / 2) * Math.tan((config.pitch * Math.PI) / 180);
+      const giModel = calcGableInfill(aSpanG, ghG, config.pitch, selectedCladding, 0.5, calc.selBeam?.sec.d ?? 0, calc.selGableChord?.sec.d ?? 0);
+      const dropperSpacingMm = giModel.dropperSpacing * 1000;
+      const baseModel = {
+        spanMm: config.width * 1000,
+        depthMm: config.depth * 1000,
+        pitchDeg: config.pitch,
+        eaveHeightMm: config.height * 1000,
+        nFrames: nF,
+        purlinSpacingMm: calc.purlinSpacing * 1000,
+        column: calc.selPost.sec,            // building corner / portal columns
+        purlin: calc.selPurlin?.sec,
+        plateOnColumn: forms.post === 'plate',
+        rafterOffsetMm,
+        gutterWidthMm,
+        dropperSpacingMm,
+        ...(wall ? { wall } : {}),
+      };
+      for (let i = 0; i < nF; i++) {
+        const L = String.fromCharCode(65 + i);
+        const lab = `${L}-${L}`;
+        const isEnd = i === 0 || i === nF - 1;
+        const model = isEnd
+          ? generateGableFrameModelSVG({
+              ...baseModel, frameType: 'gable-end', label: lab, cutFrameIndex: i,
+              rafter: gableRafter, chord: calc.selGableChord!.sec, dropper: calc.selGableDropper!.sec,
+              plateOnRafter: forms.gableTopChord === 'plate',
+            })
+          : generateGableFrameModelSVG({
+              ...baseModel, frameType: 'portal', label: lab, cutFrameIndex: i,
+              rafter: calc.selBeam!.sec, plateOnRafter: forms.beam === 'plate',
+            });
+        const num = `S-001${String.fromCharCode(98 + i)}`; // b, c, d…
+        sheets.push({
+          title: `Frame Model — Section ${lab} (${isEnd ? 'Gable End · Infill' : 'Portal'})`,
+          number: num,
+          svg: withTitleBlock(model, titleBlock, `Frame Model — Section ${lab}`, num, i + 1, nF, '1:1'),
+          description: isEnd
+            ? `Gable end frame ${lab}: tied truss + infill at 1:1 — rafters, bottom-chord tie and droppers (RHS 100×50×3.0), on the building columns. Roof plan projects to the section.`
+            : `Intermediate portal frame ${lab}: untied moment frame at 1:1 — C+plate rafters and columns, no tie/droppers. Roof plan projects to the section.`,
+        });
+      }
+    }
+
     sheets.push({
       title: 'Side Elevation — Long Side', number: 'S-002',
       svg: withTitleBlock(generateSideElevationSVG(
@@ -1171,32 +1256,7 @@ export default function App() {
         : 'Mono-pitch (skillion) geometry showing span, rise and rafter length. Single slope from high to low eave; rise = span × tan(pitch).',
     });
 
-    sheets.push({
-      title: 'Section A-A — Portal Frame 1 · Back (House Connection)', number: 'S-004',
-      svg: withTitleBlock(generateWallSectionSVG(
-        config.depth * 1000, config.pitch,
-        calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        true, calc.selGableChord?.sec.d ?? 150, 'back', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
-      ), titleBlock, 'Section A-A — PF1 Back (House Connection)', 'S-004', 1, 3, 'NTS'),
-    });
-
-    sheets.push({
-      title: 'Section A-A — Portal Frame 2 · Intermediate (Middle)', number: 'S-005',
-      svg: withTitleBlock(generateWallSectionSVG(
-        config.depth * 1000, config.pitch,
-        calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        false, 150, 'intermediate', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
-      ), titleBlock, 'Section A-A — PF2 Intermediate', 'S-005', 2, 3, 'NTS'),
-    });
-
-    sheets.push({
-      title: 'Section A-A — Portal Frame 3 · Front (Fascia End)', number: 'S-006',
-      svg: withTitleBlock(generateWallSectionSVG(
-        config.depth * 1000, config.pitch,
-        calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        true, calc.selGableChord?.sec.d ?? 150, 'front', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
-      ), titleBlock, 'Section A-A — PF3 Front (Fascia End)', 'S-006', 3, 3, 'NTS'),
-    });
+    // (Old S-004/5/6 wall-section sheets retired — superseded by the 1:1 frame model above.)
 
     sheets.push({
       title: 'Full Detail Elevation — Wall (A-A) · Socket Joint (B-B) · Post (C-C)', number: 'S-007',
@@ -1764,6 +1824,25 @@ export default function App() {
           {/* ── TAB: STRUCTURE CONFIG ── */}
           <TabsContent value="structure">
             <div className="config-grid">
+              {/* Presets — one-tap starting points */}
+              <div className="config-card" style={{ gridColumn: '1 / -1' }}>
+                <label className="config-label">Presets</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {STRUCTURAL_PRESETS.map((p) => (
+                    <button
+                      key={p.id}
+                      className="building-btn"
+                      style={{ alignItems: 'flex-start', textAlign: 'left', flex: '1 1 240px', minWidth: 220, padding: '10px 12px' }}
+                      onClick={() => applyPreset(p.id)}
+                      title={p.summary}
+                    >
+                      <span style={{ fontSize: '12px', fontWeight: 600 }}>{p.name}</span>
+                      <span style={{ fontSize: '9px', color: 'var(--text-muted)', lineHeight: 1.4 }}>{p.summary}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Building Type */}
               <div className="config-card">
                 <label className="config-label">Building Type</label>

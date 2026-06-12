@@ -34,6 +34,7 @@ import { checkAsDesigned, summarise } from '@/lib/compliance';
 import { buildChecklist, summariseChecklist, serializeChecklist, stageLabel, type ItemStatus } from '@/lib/checklist';
 import { normalizeOverlays, getOverlayGuidance, type NormalizedOverlay } from '@/lib/overlays';
 import { generateOverlaySitePlanSVG } from '@/lib/overlaySitePlan';
+import { generateStormwaterPlanSVG, generateElectricalPlanSVG } from '@/lib/servicesPlans';
 import type { ExportSheet } from '@/lib/exportPdf';
 import { downloadDesignSet } from '@/lib/designSetExport';
 import { readDesignSetForReview } from '@/lib/designSetReview';
@@ -273,12 +274,18 @@ interface SiteConstraints {
     notes?: string;
     downpipes?: {
       index?: number;
+      lat?: number;                  // downpipe position (for the drainage plan)
+      lng?: number;
       label?: string;
       capacityLs?: number;
       servesM2?: number;
       maxRoofM2?: number;            // max roof area this downpipe can take
+      existingRoofM2?: number;
       overCapacity?: boolean;        // this specific downpipe is over capacity
+      shared?: boolean;             // shares the existing dwelling downpipe (flashing only, no plumbing)
     }[];
+    // Roof catchment areas draining to each downpipe — drawn on the drainage plan.
+    catchments?: { polygon?: LatLng[]; shared?: boolean; dischargePoint?: number | null }[];
   };
   // Electrical / lighting scope carried from Intelligence → documented by Drafting,
   // designed/installed/certified by a licensed electrician (see docs).
@@ -302,6 +309,12 @@ interface SiteConstraints {
   // Easements / no-build runs — drawn greyed on the site plan with a marker, so the inspector can
   // see (and discuss) the registered constraints. `line` = a run; `polygon` = a closed no-build area.
   easements?: { kind: 'line' | 'polygon'; label?: string; coords: LatLng[] }[];
+  // Electrical layout placed on the plan in Intelligence — fittings + the drawn wiring run. Drives
+  // the Engineering electrical-layout sheet + its indicative BOM.
+  electricalLayout?: {
+    nodes: { kind: 'board' | 'switch' | 'light' | 'gpo'; lat: number; lng: number; ip?: string; fixtureType?: string; area?: string }[];
+    wires: { from: LatLng; to: LatLng }[];
+  };
 }
 
 // Map Intelligence projectType strings → Engineering BuildingType enum
@@ -527,12 +540,19 @@ export default function App() {
         notes: stormwater.notes,
         downpipes: (stormwater.dischargePoints ?? []).map(d => ({
           index: d.index,
+          lat: d.lat ?? undefined,
+          lng: d.lng ?? undefined,
           label: d.downpipe ?? undefined,
           capacityLs: d.downpipeCapacityLs,
           servesM2: d.servesM2,
           maxRoofM2: d.maxRoofM2,
+          existingRoofM2: d.existingRoofM2 ?? undefined,
           overCapacity: d.overCapacity,
+          shared: d.shared,
         })),
+        catchments: (stormwater.catchments ?? [])
+          .filter(c => c.polygon && c.polygon.length >= 3)
+          .map(c => ({ polygon: c.polygon, shared: c.shared, dischargePoint: c.dischargePoint })),
       } : undefined;
 
       // Electrical / lighting scope — carried through verbatim (lossless).
@@ -545,6 +565,22 @@ export default function App() {
         standardsNote: electrical.standardsNote,
         notes: electrical.notes,
       } : undefined;
+
+      // Electrical LAYOUT (tap-to-placed fittings + the drawn wiring run) → flatten the per-kind
+      // arrays into one tagged node list for the electrical-layout sheet + its BOM.
+      const el = electrical?.layout;
+      const elecLayout = el ? (() => {
+        const nodes: { kind: 'board' | 'switch' | 'light' | 'gpo'; lat: number; lng: number; ip?: string; fixtureType?: string; area?: string }[] = [];
+        const add = (kind: 'board' | 'switch' | 'light' | 'gpo', n?: { lat?: number; lng?: number; ip?: string; fixtureType?: string; area?: string } | null) => {
+          if (n && typeof n.lat === 'number' && typeof n.lng === 'number') nodes.push({ kind, lat: n.lat, lng: n.lng, ip: n.ip, fixtureType: n.fixtureType, area: n.area });
+        };
+        if (el.switchboard) add('board', el.switchboard);
+        (el.switches ?? []).forEach(n => add('switch', n));
+        (el.lights ?? []).forEach(n => add('light', n));
+        (el.gpos ?? []).forEach(n => add('gpo', n));
+        const wires = (el.wires ?? []).filter(w => w.from && w.to).map(w => ({ from: w.from as LatLng, to: w.to as LatLng }));
+        return nodes.length ? { nodes, wires } : undefined;
+      })() : undefined;
 
       // Store site constraints — offsets, Intelligence's compliance verdict, the
       // carried set-out (heights/standoff/overhang) and stormwater, all carried through.
@@ -570,6 +606,7 @@ export default function App() {
         sitedDepth: depth,
         stormwater: swSummary,
         electrical: elecSummary,
+        electricalLayout: elecLayout,
         ridgeBearing: typeof ridgeBearing === 'number' ? ridgeBearing : undefined,
         rotationDeg: typeof rotationDeg === 'number' ? rotationDeg : undefined,
         connectionSides: connDetail?.sides,
@@ -1052,6 +1089,33 @@ export default function App() {
           build: () => generateOverlaySitePlanSVG({ ...baseCommon, overlays: [o], easements: eases }),
         });
       });
+
+      // Stormwater / drainage plan + plumbing BOM — when downpipes were placed in Intelligence.
+      const dps = (siteConstraints.stormwater?.downpipes ?? []).filter(d => typeof d.lat === 'number' && typeof d.lng === 'number');
+      if (dps.length) {
+        ctxSheets.push({
+          title: 'Stormwater / Drainage Plan',
+          description: 'Downpipe positions + roof catchments on the block with an indicative plumbing bill of materials. Roof/stormwater plumbing to AS/NZS 3500.3 — installed & certified by a licensed plumber. Confirm the legal point of discharge.',
+          build: () => generateStormwaterPlanSVG({
+            lotPts: baseCommon.lotPts, footprint: baseCommon.footprint,
+            downpipes: dps.map(d => ({ lat: d.lat, lng: d.lng, downpipe: d.label, downpipeCapacityLs: d.capacityLs, servesM2: d.servesM2, existingRoofM2: d.existingRoofM2, shared: d.shared })),
+            catchments: siteConstraints.stormwater?.catchments,
+            designIntensityMmHr: siteConstraints.stormwater?.designIntensityMmHr,
+          }),
+        });
+      }
+      // Electrical layout + BOM — when fittings were placed in Intelligence.
+      const elNodes = siteConstraints.electricalLayout?.nodes ?? [];
+      if (elNodes.length) {
+        ctxSheets.push({
+          title: 'Electrical Layout',
+          description: 'Light fittings, switches, GPOs and the wiring run on the block with an indicative electrical bill of materials. All electrical work to AS/NZS 3000 — installed & certified by a licensed electrician.',
+          build: () => generateElectricalPlanSVG({
+            lotPts: baseCommon.lotPts, footprint: baseCommon.footprint,
+            nodes: elNodes, wires: siteConstraints.electricalLayout?.wires ?? [],
+          }),
+        });
+      }
 
       ctxSheets.forEach((c, i) => {
         const svg = c.build();

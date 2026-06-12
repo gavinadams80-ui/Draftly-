@@ -106,17 +106,36 @@ const StormwaterSchema = z.object({
   }).partial().optional(),
   dischargePoints: z.array(z.object({
     index: z.number().optional(),
-    downpipe: z.string().nullable().optional(),
+    lat: numish, lng: numish,                    // downpipe position on the building edge
+    downpipe: z.string().nullable().optional(),  // chosen type label, e.g. "Round 100 mm"
     downpipeCapacityLs: numish,
     servesM2: numish,
     maxRoofM2: numish,
+    existingRoofM2: numish,
     overCapacity: z.boolean().optional(),
+    shared: z.boolean().optional(),              // true = shares the existing dwelling downpipe (flashing only)
+  }).partial()).optional(),
+  catchments: z.array(z.object({                 // roof areas draining to each downpipe (for the plan)
+    section: z.number().optional(),
+    areaM2: numish,
+    polygon: z.array(LatLngSchema).optional(),
+    dischargePoint: z.number().nullable().optional(),  // 1-based index into dischargePoints
+    shared: z.boolean().optional(),
   }).partial()).optional(),
   totalCatchmentAreaM2: numish,
   anyOverCapacity: z.boolean().optional(),
   notes: z.string().optional(),
 }).partial();
 export type HandoffStormwater = z.infer<typeof StormwaterSchema>;
+
+// A placed electrical item on the plan (board / switch / light / GPO).
+const ElecNodeSchema = z.object({
+  lat: numish, lng: numish,
+  ip: z.string().optional(),
+  fixtureType: z.string().optional(),
+  area: z.string().optional(),
+  label: z.string().optional(),
+}).partial();
 
 // Electrical / lighting scope captured in Intelligence. Draftly documents and
 // coordinates this; a LICENSED ELECTRICIAN designs, installs and certifies it
@@ -144,6 +163,15 @@ const ElectricalSchema = z.object({
   lightSpillConstraint: z.boolean().optional(),  // AS 4282 / overlay-driven
   standardsNote: z.string().optional(),
   notes: z.string().optional(),
+  // Tap-to-place layout from the siting tool — positions + the drawn wiring run. Drawn on the
+  // Engineering electrical-layout sheet; the BOM (cable/fixings/etc.) is derived from it.
+  layout: z.object({
+    switchboard: ElecNodeSchema.nullable().optional(),
+    switches: z.array(ElecNodeSchema).optional(),
+    lights: z.array(ElecNodeSchema).optional(),
+    gpos: z.array(ElecNodeSchema).optional(),
+    wires: z.array(z.object({ from: LatLngSchema, to: LatLngSchema }).partial()).optional(),
+  }).partial().optional(),
 }).partial();
 export type HandoffElectrical = z.infer<typeof ElectricalSchema>;
 

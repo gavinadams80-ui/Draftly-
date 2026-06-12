@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, Fragment } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from 'react';
 import type {
   ProjectConfig, MemberForms, MemberOverrides, MemberForm,
   ConstructionType, BuildingType, RoofType, AttachmentType,
@@ -39,6 +39,7 @@ import { generateStormwaterPlanSVG, generateElectricalPlanSVG } from '@/lib/serv
 import type { ExportSheet } from '@/lib/exportPdf';
 import { downloadDesignSet } from '@/lib/designSetExport';
 import { readDesignSetForReview } from '@/lib/designSetReview';
+import { saveSession, loadSession, clearSession, formatSavedTime } from '@/lib/autosave';
 import { STRUCTURAL_PRESETS } from '@/lib/presets';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -319,6 +320,89 @@ interface SiteConstraints {
   };
 }
 
+// ── Autosave snapshot ──
+// Everything a reload would otherwise destroy: the design inputs, the member
+// choices, the carried site data and the costing knobs. Derived state (calcs,
+// drawings, schedule, checklist) is NOT saved — it recomputes from these.
+interface SavedDesignState {
+  config: ProjectConfig;
+  forms: MemberForms;
+  overrides: MemberOverrides;
+  selectedProfile: string;
+  selectedCladding: string;
+  standoff: number;
+  diaphragmDetail: DiaphragmDetail;
+  carriedReadiness?: { id: string; status: ItemStatus }[];
+  leftSetback: number;
+  rightSetback: number;
+  titleBlock: TitleBlockData;
+  siteConstraints: SiteConstraints | null;
+  northRotation: number;
+  ratePerKg: number;
+  elecWastePct: number;
+  plumbWastePct: number;
+}
+
+const numOr = (v: unknown, dflt: number) => (typeof v === 'number' && Number.isFinite(v) ? v : dflt);
+const strOr = (v: unknown, dflt: string) => (typeof v === 'string' && v ? v : dflt);
+
+/**
+ * Load + validate the saved session. Unknown/missing fields fall back to the
+ * defaults (schema drift across app versions must restore cleanly, not crash);
+ * a snapshot without numeric dimensions is junk and is discarded outright.
+ */
+function restoreSavedState(): { savedAt: number; state: SavedDesignState } | null {
+  const saved = loadSession();
+  if (!saved) return null;
+  const s = saved.state as Partial<SavedDesignState>;
+  const c = s.config;
+  if (!c || typeof c !== 'object' || typeof c.width !== 'number' || typeof c.depth !== 'number') {
+    clearSession();
+    return null;
+  }
+  return {
+    savedAt: saved.savedAt,
+    state: {
+      // Spread over the defaults so fields added after the save seed correctly.
+      config: { ...DEFAULT_CONFIG, ...c },
+      forms: { ...DEFAULT_FORMS, ...(typeof s.forms === 'object' ? s.forms : {}) },
+      overrides: { ...DEFAULT_OVERRIDES, ...(typeof s.overrides === 'object' ? s.overrides : {}) },
+      selectedProfile: strOr(s.selectedProfile, 'trimdek-42'),
+      selectedCladding: strOr(s.selectedCladding, 'poly-twin-10'),
+      standoff: numOr(s.standoff, 150),
+      diaphragmDetail: s.diaphragmDetail === 'screw-fixed' ? 'screw-fixed' : 'timber-battened',
+      carriedReadiness: Array.isArray(s.carriedReadiness) ? s.carriedReadiness : undefined,
+      leftSetback: numOr(s.leftSetback, 0),
+      rightSetback: numOr(s.rightSetback, 1.8),
+      titleBlock: { ...DEFAULT_TITLE_BLOCK, ...(typeof s.titleBlock === 'object' ? s.titleBlock : {}) },
+      siteConstraints: s.siteConstraints && typeof s.siteConstraints === 'object' ? s.siteConstraints : null,
+      northRotation: numOr(s.northRotation, 0),
+      ratePerKg: numOr(s.ratePerKg, 6.5),
+      elecWastePct: numOr(s.elecWastePct, 10),
+      plumbWastePct: numOr(s.plumbWastePct, 10),
+    },
+  };
+}
+
+// The aerial underlay is the one multi-MB payload (a base64 JPEG). When the full
+// snapshot blows the localStorage quota, this slim copy — same design, no
+// imagery — is saved instead (the aerial still lives in the Intelligence export).
+function slimSnapshot(s: SavedDesignState): SavedDesignState {
+  if (!s.siteConstraints?.aerial?.imageBase64) return s;
+  return { ...s, siteConstraints: { ...s.siteConstraints, aerial: { ...s.siteConstraints.aerial, imageBase64: undefined } } };
+}
+
+// A session the user hasn't touched: every field still IS the seeded default
+// (reference-equal — state identity is stable until a setter runs). Saving it
+// would make every later visit open with a pointless "Restored…" banner.
+function isPristineDefaults(s: SavedDesignState): boolean {
+  return s.config === DEFAULT_CONFIG && s.forms === DEFAULT_FORMS && s.overrides === DEFAULT_OVERRIDES &&
+    s.titleBlock === DEFAULT_TITLE_BLOCK && s.siteConstraints === null && s.carriedReadiness === undefined &&
+    s.selectedProfile === 'trimdek-42' && s.selectedCladding === 'poly-twin-10' && s.standoff === 150 &&
+    s.diaphragmDetail === 'timber-battened' && s.leftSetback === 0 && s.rightSetback === 1.8 &&
+    s.northRotation === 0 && s.ratePerKg === 6.5 && s.elecWastePct === 10 && s.plumbWastePct === 10;
+}
+
 // Map Intelligence projectType strings → Engineering BuildingType enum
 const PROJECT_TYPE_MAP: Record<string, BuildingType> = {
   pergola: 'pergola', carport: 'carport', shed: 'shed',
@@ -398,23 +482,88 @@ function buildSchedule(
 
 // ── Main App ──
 export default function App() {
-  const [config, setConfig] = useState<ProjectConfig>(DEFAULT_CONFIG);
-  const [forms, setForms] = useState<MemberForms>(DEFAULT_FORMS);
-  const [overrides, setOverrides] = useState<MemberOverrides>(DEFAULT_OVERRIDES);
-  const [selectedProfile, setSelectedProfile] = useState('trimdek-42');
+  // Last autosaved session (validated, defaults filled) — read once on mount.
+  // State seeds from it silently; a banner offers "Start fresh" to discard.
+  const [restored] = useState(restoreSavedState);
+  const boot = restored?.state;
+  const [restoreNotice, setRestoreNotice] = useState(restored != null);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(restored?.savedAt ?? null);
+
+  const [config, setConfig] = useState<ProjectConfig>(boot?.config ?? DEFAULT_CONFIG);
+  const [forms, setForms] = useState<MemberForms>(boot?.forms ?? DEFAULT_FORMS);
+  const [overrides, setOverrides] = useState<MemberOverrides>(boot?.overrides ?? DEFAULT_OVERRIDES);
+  const [selectedProfile, setSelectedProfile] = useState(boot?.selectedProfile ?? 'trimdek-42');
   const [showAllPassing, setShowAllPassing] = useState(false);
   const [activeTab, setActiveTab] = useState('structure');
-  const [selectedCladding, setSelectedCladding] = useState('poly-twin-10');
-  const [standoff, setStandoff] = useState(150);        // mm — standoff from house fascia
-  const [diaphragmDetail, setDiaphragmDetail] = useState<DiaphragmDetail>('timber-battened'); // ply ceiling shear-transfer detail
-  const [carriedReadiness, setCarriedReadiness] = useState<{ id: string; status: ItemStatus }[] | undefined>(undefined); // Drafting/cert ticks from a handback
-  const [leftSetback, setLeftSetback] = useState(0);    // m — right-side wall stops this far from front (0 = full depth)
-  const [rightSetback, setRightSetback] = useState(1.8); // m — right-side wall stops this far from front
-  const [titleBlock, setTitleBlock] = useState<TitleBlockData>(DEFAULT_TITLE_BLOCK);
-  const [siteConstraints, setSiteConstraints] = useState<SiteConstraints | null>(null);
-  const [northRotation, setNorthRotation] = useState(0); // degrees clockwise, 0 = north up
+  const [selectedCladding, setSelectedCladding] = useState(boot?.selectedCladding ?? 'poly-twin-10');
+  const [standoff, setStandoff] = useState(boot?.standoff ?? 150); // mm — standoff from house fascia
+  const [diaphragmDetail, setDiaphragmDetail] = useState<DiaphragmDetail>(boot?.diaphragmDetail ?? 'timber-battened'); // ply ceiling shear-transfer detail
+  const [carriedReadiness, setCarriedReadiness] = useState<{ id: string; status: ItemStatus }[] | undefined>(boot?.carriedReadiness); // Drafting/cert ticks from a handback
+  const [leftSetback, setLeftSetback] = useState(boot?.leftSetback ?? 0);    // m — right-side wall stops this far from front (0 = full depth)
+  const [rightSetback, setRightSetback] = useState(boot?.rightSetback ?? 1.8); // m — right-side wall stops this far from front
+  const [titleBlock, setTitleBlock] = useState<TitleBlockData>(boot?.titleBlock ?? DEFAULT_TITLE_BLOCK);
+  const [siteConstraints, setSiteConstraints] = useState<SiteConstraints | null>(boot?.siteConstraints ?? null);
+  const [northRotation, setNorthRotation] = useState(boot?.northRotation ?? 0); // degrees clockwise, 0 = north up
+  const [ratePerKg, setRatePerKg] = useState(boot?.ratePerKg ?? 6.5);
+  // Provisional wastage allowances (%) on the services BOMs — adjustable; a field call for the trade.
+  const [elecWastePct, setElecWastePct] = useState(boot?.elecWastePct ?? 10);
+  const [plumbWastePct, setPlumbWastePct] = useState(boot?.plumbWastePct ?? 10);
   const updateTB = useCallback((patch: Partial<TitleBlockData>) =>
     setTitleBlock(prev => ({ ...prev, ...patch })), []);
+
+  // ── Autosave: debounce-persist the inputs on every change ──
+  const persistedState = useMemo<SavedDesignState>(() => ({
+    config, forms, overrides, selectedProfile, selectedCladding, standoff,
+    diaphragmDetail, carriedReadiness, leftSetback, rightSetback, titleBlock,
+    siteConstraints, northRotation, ratePerKg, elecWastePct, plumbWastePct,
+  }), [config, forms, overrides, selectedProfile, selectedCladding, standoff,
+    diaphragmDetail, carriedReadiness, leftSetback, rightSetback, titleBlock,
+    siteConstraints, northRotation, ratePerKg, elecWastePct, plumbWastePct]);
+  const persistedRef = useRef(persistedState);
+  persistedRef.current = persistedState;
+
+  useEffect(() => {
+    if (isPristineDefaults(persistedState)) return; // untouched defaults — nothing worth keeping
+    const t = window.setTimeout(() => {
+      const at = saveSession(persistedState, slimSnapshot(persistedState));
+      if (at !== null) setLastSavedAt(at);
+    }, 800);
+    return () => window.clearTimeout(t);
+  }, [persistedState]);
+
+  // Flush on tab close/refresh so edits inside the debounce window still land.
+  useEffect(() => {
+    const flush = () => {
+      const s = persistedRef.current;
+      if (!isPristineDefaults(s)) saveSession(s, slimSnapshot(s));
+    };
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
+  }, []);
+
+  // "Start fresh" on the restore banner: drop the saved session and reset
+  // everything autosave covers back to the defaults.
+  const startFresh = useCallback(() => {
+    clearSession();
+    setConfig(DEFAULT_CONFIG);
+    setForms(DEFAULT_FORMS);
+    setOverrides(DEFAULT_OVERRIDES);
+    setSelectedProfile('trimdek-42');
+    setSelectedCladding('poly-twin-10');
+    setStandoff(150);
+    setDiaphragmDetail('timber-battened');
+    setCarriedReadiness(undefined);
+    setLeftSetback(0);
+    setRightSetback(1.8);
+    setTitleBlock(DEFAULT_TITLE_BLOCK);
+    setSiteConstraints(null);
+    setNorthRotation(0);
+    setRatePerKg(6.5);
+    setElecWastePct(10);
+    setPlumbWastePct(10);
+    setLastSavedAt(null);
+    setRestoreNotice(false);
+  }, []);
 
   const importIntelligenceProject = useCallback((file: File) => {
     const reader = new FileReader();
@@ -1028,11 +1177,7 @@ export default function App() {
     return summariseChecklist(items);
   }, [siteConstraints, config.width, config.depth, config.height, config.roofType, config.windPressureKpa, calc, compliance, carriedReadiness]);
 
-  // ── Material take-off & cost ──
-  const [ratePerKg, setRatePerKg] = useState(6.5);
-  // Provisional wastage allowances (%) on the services BOMs — adjustable; a field call for the trade.
-  const [elecWastePct, setElecWastePct] = useState(10);
-  const [plumbWastePct, setPlumbWastePct] = useState(10);
+  // ── Material take-off & cost ── (ratePerKg + wastage live in the state block above)
   const materialSchedule = useMemo(() => buildSchedule(config, calc, standoff, ratePerKg), [config, calc, standoff, ratePerKg]);
 
   // ── Submission drawing set — single source for the on-screen sheets and the PDF ──
@@ -1495,6 +1640,14 @@ export default function App() {
           <span className="logo-tagline">Structural Designer</span>
         </div>
         <div className="header-right">
+          {lastSavedAt !== null && (
+            <span
+              title="Design autosaves to this browser and restores on reload. Export a DesignSet for a durable file."
+              style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-muted)', whiteSpace: 'nowrap', letterSpacing: '0.04em' }}
+            >
+              ↻ autosaved {formatSavedTime(lastSavedAt)}
+            </span>
+          )}
           <Badge variant="outline" style={{ fontFamily: 'var(--mono)', fontSize: '10px', letterSpacing: '0.06em' }}>
             {STANDARDS[config.constructionType]}
           </Badge>
@@ -1512,6 +1665,29 @@ export default function App() {
           </label>
         </div>
       </header>
+
+      {/* ── RESTORED-SESSION NOTICE ── */}
+      {restoreNotice && restored && (
+        <div style={{
+          display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, padding: '8px 24px',
+          background: 'rgba(201,168,76,0.10)', borderBottom: '1px solid rgba(201,168,76,0.35)',
+          fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text)',
+        }}>
+          <span>↻ Restored your last session (saved {formatSavedTime(restored.savedAt)}).</span>
+          <button
+            onClick={() => setRestoreNotice(false)}
+            style={{ fontSize: '10px', padding: '4px 12px', background: 'var(--accent)', color: '#111210', border: 'none', borderRadius: 4, fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--mono)' }}
+          >
+            Keep working
+          </button>
+          <button
+            onClick={startFresh}
+            style={{ fontSize: '10px', padding: '4px 12px', background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 4, fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--mono)' }}
+          >
+            Start fresh
+          </button>
+        </div>
+      )}
 
       {/* ── MAIN ── */}
       <main className="app-main">
@@ -2800,6 +2976,11 @@ export default function App() {
                     {checklist.readyForHandover
                       ? `✓ Ready (${checklist.percent}%) — carries the readiness checklist for Drafting to continue.`
                       : `⚠ ${checklist.handoverOutstanding.length} item(s) outstanding — handover allowed; the checklist travels with it.`}
+                  </div>
+                  <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--mono)', marginTop: 4 }}>
+                    {lastSavedAt !== null
+                      ? `↻ Session autosaved ${formatSavedTime(lastSavedAt)} (this browser) — the .designset.json stays the durable handover file.`
+                      : '↻ The session autosaves to this browser as you design — the .designset.json stays the durable handover file.'}
                   </div>
                 </div>
                 <button

@@ -12,7 +12,7 @@
     "check:handoff": "node scripts/check-handoff.mjs"
   },
   "dependencies": {
-    "@draftly/drawings": "github:gavinadams80-ui/Draftly-Drawings#claude/engineering-presets-pdf-enak5m",
+    "@draftly/drawings": "github:gavinadams80-ui/Draftly-Drawings#db913dc847b4236de127baef4001c97f57ff1015",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",

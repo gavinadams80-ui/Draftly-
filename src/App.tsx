@@ -1071,6 +1071,12 @@ export default function App() {
         fasciaBottomMm: siteConstraints?.fasciaHeight != null ? siteConstraints.fasciaHeight * 1000 : undefined,
         fasciaTopMm: siteConstraints?.gutterHeight != null ? siteConstraints.gutterHeight * 1000 : undefined,
       } : undefined;
+      // Gutter clearance + width: from the Site Intelligence set-out where available. The
+      // rafter starts at the offset (clearing the gutter) and the drawn gutter takes the
+      // entered width. NOTE: until Intelligence carries explicit fields, the offset falls
+      // back to the existing-gutter overhang (+clearance) and the gutter width to 115mm.
+      const gutterWidthMm = 115;
+      const rafterOffsetMm = siteConstraints?.existingGutterOverhangMm ?? (gutterWidthMm + 50);
       const baseModel = {
         spanMm: config.width * 1000,
         depthMm: config.depth * 1000,
@@ -1081,6 +1087,8 @@ export default function App() {
         column: calc.selPost.sec,            // building corner / portal columns
         purlin: calc.selPurlin?.sec,
         plateOnColumn: forms.post === 'plate',
+        rafterOffsetMm,
+        gutterWidthMm,
         ...(wall ? { wall } : {}),
       };
       for (let i = 0; i < nF; i++) {

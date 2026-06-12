@@ -37,6 +37,8 @@ import { generateOverlaySitePlanSVG } from '@/lib/overlaySitePlan';
 import type { ExportSheet } from '@/lib/exportPdf';
 import { downloadDesignSet } from '@/lib/designSetExport';
 import { readDesignSetForReview } from '@/lib/designSetReview';
+import { STRUCTURAL_PRESETS } from '@/lib/presets';
+import { composePlanOverSection, planRidgeX, sectionRidgeX } from '@/lib/projectionSheet';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -574,6 +576,19 @@ export default function App() {
     setConfig((prev) => ({ ...prev, ...patch }));
   }, []);
 
+  // Apply a saved structural preset: seed config + member forms, clear manual section
+  // overrides so the preset's forms drive sizing, and set the related layout fields.
+  const applyPreset = useCallback((presetId: string) => {
+    const preset = STRUCTURAL_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    setConfig((prev) => ({ ...prev, ...preset.config }));
+    if (preset.forms) setForms((prev) => ({ ...prev, ...preset.forms }));
+    setOverrides(DEFAULT_OVERRIDES);
+    if (preset.standoffMm != null) setStandoff(preset.standoffMm);
+    if (preset.leftSetback != null) setLeftSetback(preset.leftSetback);
+    if (preset.rightSetback != null) setRightSetback(preset.rightSetback);
+  }, []);
+
   const updateForm = useCallback((member: keyof MemberForms | string, form: string) => {
     setForms((prev) => ({ ...prev, [member]: form }));
   }, []);
@@ -1006,6 +1021,36 @@ export default function App() {
       ), titleBlock, 'Plan View — Structure Layout', 'S-001', 1, 1, 'NTS'),
       description: planDesc,
     });
+
+    // ── Projection — Plan over Section A-A (PF1) ──
+    // The plan placed directly above the first frame section, sharing a vertical
+    // projection line through the roof centreline so the two project up/down.
+    {
+      const planSvgRaw = generateBuildingPlanSVG(
+        config.width, config.depth, config.height, config.pitch,
+        config.attachment, config.portalFrameCount, config.roofType === 'gable',
+        standoff / 1000, leftSetback, rightSetback, calc.purlinSpacing, northRotation,
+      );
+      // Same span as the existing Section A-A sheets (its canvas fits ~depth, not the
+      // full width — see the width-vs-depth note in the PR).
+      const sectionSpanMm = config.depth * 1000;
+      const sectionSvgRaw = generateWallSectionSVG(
+        sectionSpanMm, config.pitch,
+        calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
+        true, calc.selGableChord?.sec.d ?? 150, 'back', calc.selPost?.sec.d ?? 100,
+        config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
+      );
+      const composed = composePlanOverSection(
+        planSvgRaw, sectionSvgRaw,
+        planRidgeX(config), sectionRidgeX(sectionSpanMm),
+        { planTitle: 'PLAN — Structure Layout', sectionTitle: 'SECTION A-A — PF1 (House Connection)' },
+      );
+      sheets.push({
+        title: 'Projection — Plan over Section A-A', number: 'S-001a',
+        svg: withTitleBlock(composed, titleBlock, 'Projection — Plan over Section A-A', 'S-001a', 1, 1, 'NTS'),
+        description: 'Plan set directly above Section A-A on a shared roof-centreline (AS1100 third-angle) so the two project up/down. Centre-to-centre of the pitched roof is the vertical datum.',
+      });
+    }
 
     sheets.push({
       title: 'Side Elevation — Long Side', number: 'S-002',
@@ -1620,6 +1665,25 @@ export default function App() {
           {/* ── TAB: STRUCTURE CONFIG ── */}
           <TabsContent value="structure">
             <div className="config-grid">
+              {/* Presets — one-tap starting points */}
+              <div className="config-card" style={{ gridColumn: '1 / -1' }}>
+                <label className="config-label">Presets</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {STRUCTURAL_PRESETS.map((p) => (
+                    <button
+                      key={p.id}
+                      className="building-btn"
+                      style={{ alignItems: 'flex-start', textAlign: 'left', flex: '1 1 240px', minWidth: 220, padding: '10px 12px' }}
+                      onClick={() => applyPreset(p.id)}
+                      title={p.summary}
+                    >
+                      <span style={{ fontSize: '12px', fontWeight: 600 }}>{p.name}</span>
+                      <span style={{ fontSize: '9px', color: 'var(--text-muted)', lineHeight: 1.4 }}>{p.summary}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Building Type */}
               <div className="config-card">
                 <label className="config-label">Building Type</label>

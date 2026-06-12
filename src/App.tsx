@@ -1060,12 +1060,16 @@ export default function App() {
     if (config.roofType === 'gable' && calc.selBeam?.sec && calc.selPost?.sec && calc.selGableChord?.sec && calc.selGableDropper?.sec) {
       const model = generateGableFrameModelSVG({
         spanMm: config.width * 1000,
+        depthMm: config.depth * 1000,
         pitchDeg: config.pitch,
         eaveHeightMm: config.height * 1000,
+        nFrames: config.portalFrameCount,
+        purlinSpacingMm: calc.purlinSpacing * 1000,
         rafter: calc.selBeam.sec,
         column: calc.selPost.sec,
         chord: calc.selGableChord.sec,
         dropper: calc.selGableDropper.sec,
+        purlin: calc.selPurlin?.sec,
         plateOnRafter: forms.beam === 'plate',
         plateOnColumn: forms.post === 'plate',
       });

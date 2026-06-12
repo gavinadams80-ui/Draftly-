@@ -1076,7 +1076,7 @@ export default function App() {
       //   50mm clearance) → the `standoff` state. The rafter starts at the frame stand-off;
       //   the drawn gutter takes the entered overhang as its projection.
       const gutterWidthMm = siteConstraints?.existingGutterOverhangMm ?? 115;
-      const rafterOffsetMm = standoff;
+      const rafterOffsetMm = attachedToDwelling ? standoff : 0; // gutter clearance only applies vs a house
       // Infill droppers wired to the engineering gable-infill detail (panel + dropper layout).
       const aSpanG = Math.max(0.5, config.width - 2 * (standoff / 1000));
       const ghG = (aSpanG / 2) * Math.tan((config.pitch * Math.PI) / 180);

@@ -48,6 +48,14 @@ now auto-fits spans ≤ ~15 m — legacy, superseded by the model for sections).
 freestanding fascia offset track the Intelligence stand-off if it changes from 150; further
 development in Drafting (the CAD app consumes the model).
 
+**Follow-up (2026-06-13, PR #19):** the loose ends the sandboxed session couldn't push are closed —
+`v0.12.0` tag now EXISTS on Draftly-Drawings (= main merge `cba979f`); `package.json` pins
+`#v0.12.0` (tag, not raw SHA); `projectionSheet.ts` deletion landed; session branches trimmed and
+auto-delete-on-merge enabled repo-wide. Drafting now renders the SAME model on DesignSet import
+(Drafting PR #43, `designSetModel.ts` → `generateGableFrameModelSVG` for gable A-A/B-B/C-C).
+⚠️ npm gotcha: npm cached a stale resolution for an earlier transient `v0.12.0` ref — if an install
+shows 0.11.0, run `npm update @draftly/drawings` (cache clean does NOT fix it).
+
 ## Commands
 
 ```bash

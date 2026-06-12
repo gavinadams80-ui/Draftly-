@@ -2,6 +2,52 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⭐ Session handover — Engineering presets + 1:1 gable-frame model (2026-06-12)
+
+Branch `claude/engineering-presets-pdf-enak5m`, merged to `main`. Spanned two repos:
+`Draftly-` (this, engineering) and `@draftly/drawings` (Draftly-Drawings, bumped 0.11.0 → 0.12.0).
+
+**1. Structural presets** (`src/lib/presets.ts`) — one-tap config starting points. First preset
+*"9.27 Clear-Span Gable · Portal · C+Plate"* seeds 9.27 m clear span, gable, portal-frame
+intermediates, 10° pitch, 3 frames, three-side attached. Portal rafter/column → C300×70×3.0 **+
+plate** (form `'plate'`, LTB 0.92, auto-picks deepest passing C). Gable end frame + infill →
+**RHS 100×50×3.0** (pinned via `overrides`). `applyPreset()` seeds config + forms + overrides +
+standoff/setbacks. Picker chips at the top of the Structure tab.
+
+**2. 1:1 gable-frame model** (`@draftly/drawings` `generateGableFrameModelSVG`) — the **canonical
+section drawing**. It **replaces** the old `generateWallSectionSVG` sheets (S-004/5/6) and the
+plan-over-section projection (S-001a), both now **retired** from `submissionSheets`. Sheets now
+emitted: **S-001b/c/d** = one section per frame (A-A/B-B/C-C). Drawn from REAL steel members
+(catalogue depth, C lips / RHS box, plate on the C open face) at true 1:1; member sizes track the
+engineering pick (`calc.sel*`). No page furniture (the `withTitleBlock` wrap is a placeholder for
+a future **layout tab**).
+- **A-A, C-C** = gable-end tied trusses: RHS infill (rafters + bottom-chord tie + droppers; 100 mm
+  face to viewer; centred on the apex, symmetric; chord inset to clear the fascia/inner column).
+- **B-B** = untied portal moment frame (C+plate rafters & columns; no tie/droppers).
+- **Roof plan** (span × depth: frames + purlins) projects to the section; plan purlins segmented
+  between frames. Purlins: ridge 75 mm off apex, eave flush with rafter end, **even** spacing
+  (max = roofing-profile `internalSpan`, remainder spread over the bays); section end-views rotated
+  flush to the rafter pitch; **dropper layout from `calcGableInfill`**.
+- **Attached (brick) variant** — `generateBrickWallBlock` (timber 90×45 + cavity + brick + fascia C
+  + gutter) on both sides, gap = clear span; fascia/gutter heights + gutter overhang from **Site
+  Intelligence** (`siteConstraints.fasciaHeight / gutterHeight / existingGutterOverhangMm`); **red
+  RHS through-fascia wall attachment** (internal sleeve) sitting on the brick top. Rafter offset =
+  frame stand-off.
+- **Freestanding variant** — steel **column→rafter knee**: column continues to the rafter top
+  (pitch-cut), rafter + chords cut to the inner column face, **2 laser-cut sleeve plates** (top
+  rhombus with plumb-cut ends + bottom square, 150×75 mm, 2× 20 mm holes 30 mm off edges) welded to
+  the column top into the sections; column extended out to the fascia face; eave purlin becomes a
+  plumb **fascia + gutter** (continuous along the eave in plan). Fascia/gutter sit 150 mm out from
+  the rafter eave (column 100 + fascia 50) = the attached standoff, so the two **overlay**.
+
+**Key files**: `src/lib/presets.ts`; `src/App.tsx` (preset picker + `submissionSheets`);
+`@draftly/drawings/src/gableFrameModel.ts`, `.../brickWallBlock.ts`; `.../wallSection.ts` (canvas
+now auto-fits spans ≤ ~15 m — legacy, superseded by the model for sections).
+
+**Next**: real layout/paperspace tab; plate face-flush vs centred (currently centred); make the
+freestanding fascia offset track the Intelligence stand-off if it changes from 150; further
+development in Drafting (the CAD app consumes the model).
+
 ## Commands
 
 ```bash

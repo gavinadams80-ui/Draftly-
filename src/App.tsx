@@ -23,7 +23,7 @@ import {
   withTitleBlock, DEFAULT_TITLE_BLOCK, type TitleBlockData,
   generateCornerPostSVG, generateRafterLedgerSVG, generateCrossBracingSVG,
   generateSocketJointSVG, generateFasciaPenetrationSVG,
-  generateWallSectionSVG, generateFullElevationSVG,
+  generateFullElevationSVG,
   generateSitePlanSVG, type LatLng,
   generateSideElevationSVG,
   generateGableFrameModelSVG,
@@ -39,7 +39,6 @@ import type { ExportSheet } from '@/lib/exportPdf';
 import { downloadDesignSet } from '@/lib/designSetExport';
 import { readDesignSetForReview } from '@/lib/designSetReview';
 import { STRUCTURAL_PRESETS } from '@/lib/presets';
-import { composePlanOverSection, planRidgeX, sectionRidgeX } from '@/lib/projectionSheet';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -1023,36 +1022,6 @@ export default function App() {
       description: planDesc,
     });
 
-    // ── Projection — Plan over Section A-A (PF1) ──
-    // The plan placed directly above the first frame section, sharing a vertical
-    // projection line through the roof centreline so the two project up/down.
-    {
-      const planSvgRaw = generateBuildingPlanSVG(
-        config.width, config.depth, config.height, config.pitch,
-        config.attachment, config.portalFrameCount, config.roofType === 'gable',
-        standoff / 1000, leftSetback, rightSetback, calc.purlinSpacing, northRotation,
-      );
-      // The portal frame spans the building width (the clear span); the wall-section
-      // canvas now auto-fits wide spans (@draftly/drawings ≥ 0.12.0).
-      const sectionSpanMm = config.width * 1000;
-      const sectionSvgRaw = generateWallSectionSVG(
-        sectionSpanMm, config.pitch,
-        calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        true, calc.selGableChord?.sec.d ?? 150, 'back', calc.selPost?.sec.d ?? 100,
-        config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
-      );
-      const composed = composePlanOverSection(
-        planSvgRaw, sectionSvgRaw,
-        planRidgeX(config), sectionRidgeX(sectionSpanMm),
-        { planTitle: 'PLAN — Structure Layout', sectionTitle: 'SECTION A-A — PF1 (House Connection)' },
-      );
-      sheets.push({
-        title: 'Projection — Plan over Section A-A', number: 'S-001a',
-        svg: withTitleBlock(composed, titleBlock, 'Projection — Plan over Section A-A', 'S-001a', 1, 1, 'NTS'),
-        description: 'Plan set directly above Section A-A on a shared roof-centreline (AS1100 third-angle) so the two project up/down. Centre-to-centre of the pitched roof is the vertical datum.',
-      });
-    }
-
     // ── Frame models — 1:1, real members (one section per frame: A-A, B-B, C-C…) ──
     // End frames are gable-end tied trusses (RHS infill: rafters + bottom-chord tie +
     // droppers); interior frames are untied portal moment frames (C + plate rafters &
@@ -1143,32 +1112,7 @@ export default function App() {
         : 'Mono-pitch (skillion) geometry showing span, rise and rafter length. Single slope from high to low eave; rise = span × tan(pitch).',
     });
 
-    sheets.push({
-      title: 'Section A-A — Portal Frame 1 · Back (House Connection)', number: 'S-004',
-      svg: withTitleBlock(generateWallSectionSVG(
-        config.width * 1000, config.pitch,
-        calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        true, calc.selGableChord?.sec.d ?? 150, 'back', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
-      ), titleBlock, 'Section A-A — PF1 Back (House Connection)', 'S-004', 1, 3, 'NTS'),
-    });
-
-    sheets.push({
-      title: 'Section A-A — Portal Frame 2 · Intermediate (Middle)', number: 'S-005',
-      svg: withTitleBlock(generateWallSectionSVG(
-        config.width * 1000, config.pitch,
-        calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        false, 150, 'intermediate', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
-      ), titleBlock, 'Section A-A — PF2 Intermediate', 'S-005', 2, 3, 'NTS'),
-    });
-
-    sheets.push({
-      title: 'Section A-A — Portal Frame 3 · Front (Fascia End)', number: 'S-006',
-      svg: withTitleBlock(generateWallSectionSVG(
-        config.width * 1000, config.pitch,
-        calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
-        true, calc.selGableChord?.sec.d ?? 150, 'front', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
-      ), titleBlock, 'Section A-A — PF3 Front (Fascia End)', 'S-006', 3, 3, 'NTS'),
-    });
+    // (Old S-004/5/6 wall-section sheets retired — superseded by the 1:1 frame model above.)
 
     sheets.push({
       title: 'Full Detail Elevation — Wall (A-A) · Socket Joint (B-B) · Post (C-C)', number: 'S-007',

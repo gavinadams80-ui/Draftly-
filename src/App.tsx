@@ -26,6 +26,7 @@ import {
   generateWallSectionSVG, generateFullElevationSVG,
   generateSitePlanSVG, type LatLng,
   generateSideElevationSVG,
+  generateGableFrameModelSVG,
 } from '@draftly/drawings';
 import { generateBomSVG } from '@/lib/bomDrawing';
 import { buildComputations, generateComputationsSheetSVGs } from '@/lib/computations';
@@ -583,7 +584,7 @@ export default function App() {
     if (!preset) return;
     setConfig((prev) => ({ ...prev, ...preset.config }));
     if (preset.forms) setForms((prev) => ({ ...prev, ...preset.forms }));
-    setOverrides(DEFAULT_OVERRIDES);
+    setOverrides({ ...DEFAULT_OVERRIDES, ...(preset.overrides ?? {}) } as MemberOverrides);
     if (preset.standoffMm != null) setStandoff(preset.standoffMm);
     if (preset.leftSetback != null) setLeftSetback(preset.leftSetback);
     if (preset.rightSetback != null) setRightSetback(preset.rightSetback);
@@ -1049,6 +1050,29 @@ export default function App() {
         title: 'Projection — Plan over Section A-A', number: 'S-001a',
         svg: withTitleBlock(composed, titleBlock, 'Projection — Plan over Section A-A', 'S-001a', 1, 1, 'NTS'),
         description: 'Plan set directly above Section A-A on a shared roof-centreline (AS1100 third-angle) so the two project up/down. Centre-to-centre of the pitched roof is the vertical datum.',
+      });
+    }
+
+    // ── Gable Frame — 1:1 model (real steel members) ──
+    // Section A-A and a projecting top view built from the actual selected sections, at
+    // true scale, with no page detail (that moves to the layout tab). Member sizes match
+    // the engineering pick: portal rafter/column (C + plate), gable chord + droppers.
+    if (config.roofType === 'gable' && calc.selBeam?.sec && calc.selPost?.sec && calc.selGableChord?.sec && calc.selGableDropper?.sec) {
+      const model = generateGableFrameModelSVG({
+        spanMm: config.width * 1000,
+        pitchDeg: config.pitch,
+        eaveHeightMm: config.height * 1000,
+        rafter: calc.selBeam.sec,
+        column: calc.selPost.sec,
+        chord: calc.selGableChord.sec,
+        dropper: calc.selGableDropper.sec,
+        plateOnRafter: forms.beam === 'plate',
+        plateOnColumn: forms.post === 'plate',
+      });
+      sheets.push({
+        title: 'Gable Frame — 1:1 Model (Plan + Section A-A)', number: 'S-001b',
+        svg: withTitleBlock(model, titleBlock, 'Gable Frame — 1:1 Model', 'S-001b', 1, 1, '1:1'),
+        description: 'True-scale model of the gable frame from real steel members — rafters, bottom-chord tie, infill droppers and columns at their actual section depths, with a plate on the C open face. Top view projects to Section A-A. Member sizes match the engineering selection.',
       });
     }
 

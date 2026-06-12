@@ -13,6 +13,9 @@ export interface StructuralPreset {
   summary: string;     // one-line description shown under the chip
   config: Partial<ProjectConfig>;
   forms?: Partial<MemberForms>;
+  // Fixed section sizes (exact catalogue size strings) for members the design pins
+  // regardless of span — e.g. the gable/infill members. Members not listed auto-size.
+  overrides?: Partial<Record<keyof MemberForms, string>>;
   // Optional layout state that lives outside ProjectConfig in App.tsx.
   standoffMm?: number;
   leftSetback?: number;
@@ -25,7 +28,8 @@ export const STRUCTURAL_PRESETS: StructuralPreset[] = [
     name: '9.27 Clear-Span Gable · Portal · C+Plate',
     summary:
       '9.27 m clear span, gable rafter design with portal-frame intermediates. ' +
-      'Cold-rolled C-section rafters & columns with a plate welded to the face (LTB 0.92). Three frames.',
+      'Portal rafters & columns: cold-rolled C with a plate on the face (300 C, LTB 0.92). ' +
+      'Gable & infill: RHS 100×50×3.0.',
     config: {
       buildingType: 'pergola',
       constructionType: 'csection',
@@ -38,14 +42,20 @@ export const STRUCTURAL_PRESETS: StructuralPreset[] = [
       baseFixity: 'pinned',
       bracing: 'moment-frame',
     },
-    // Cold-rolled C with a plate on the face → MemberForm 'plate' (LTB 0.92).
-    // Applied to the moment-frame members (rafter + portal column) and the gable
-    // rafters/top-chord that read on the three rafter sections.
+    // Portal moment-frame members → C with a face plate (LTB 0.92); auto-sizes to the
+    // deepest passing C (≈ C300×70×3.0 at 9.27 m). Gable end frame + infill droppers →
+    // RHS 100×50×3.0, pinned via overrides so they stay consistent across the design.
     forms: {
       beam: 'plate',
       post: 'plate',
-      gableChord: 'plate',
-      gableTopChord: 'plate',
+      gableChord: 'rhs',
+      gableDropper: 'rhs',
+      gableTopChord: 'rhs',
+    },
+    overrides: {
+      gableChord: 'RHS 100 × 50 × 3.0',
+      gableDropper: 'RHS 100 × 50 × 3.0',
+      gableTopChord: 'RHS 100 × 50 × 3.0',
     },
   },
 ];

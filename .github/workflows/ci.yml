@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci || npm install
+      # Hard gate: tsc -b typecheck + vite build.
+      - run: npm run build
+      # Advisory until the existing lint debt is cleared — reports, does not block.
+      - name: Lint (advisory)
+        run: npm run lint
+        continue-on-error: true

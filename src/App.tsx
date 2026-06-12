@@ -1061,6 +1061,16 @@ export default function App() {
     if (config.roofType === 'gable' && calc.selBeam?.sec && calc.selPost?.sec && calc.selGableChord?.sec && calc.selGableDropper?.sec) {
       const nF = config.portalFrameCount;
       const gableRafter = calc.selGableTopChord?.sec ?? calc.selGableChord.sec;
+      // Existing brick-veneer dwelling walls: the clear span is the gap between inner
+      // brick faces (config.width, which tracks the Intelligence sited width). Fascia +
+      // gutter heights come straight from the Site Intelligence handoff and re-render
+      // whenever that document changes; absent → the wall block uses its own defaults.
+      const attachedToDwelling = config.attachment !== 'freestanding';
+      const wall = attachedToDwelling ? {
+        eaveHeightMm: config.height * 1000,
+        fasciaBottomMm: siteConstraints?.fasciaHeight != null ? siteConstraints.fasciaHeight * 1000 : undefined,
+        fasciaTopMm: siteConstraints?.gutterHeight != null ? siteConstraints.gutterHeight * 1000 : undefined,
+      } : undefined;
       const baseModel = {
         spanMm: config.width * 1000,
         depthMm: config.depth * 1000,
@@ -1071,6 +1081,7 @@ export default function App() {
         column: calc.selPost.sec,            // building corner / portal columns
         purlin: calc.selPurlin?.sec,
         plateOnColumn: forms.post === 'plate',
+        ...(wall ? { wall } : {}),
       };
       for (let i = 0; i < nF; i++) {
         const L = String.fromCharCode(65 + i);

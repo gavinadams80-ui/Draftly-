@@ -1071,12 +1071,17 @@ export default function App() {
         fasciaBottomMm: siteConstraints?.fasciaHeight != null ? siteConstraints.fasciaHeight * 1000 : undefined,
         fasciaTopMm: siteConstraints?.gutterHeight != null ? siteConstraints.gutterHeight * 1000 : undefined,
       } : undefined;
-      // Gutter clearance + width: from the Site Intelligence set-out where available. The
-      // rafter starts at the offset (clearing the gutter) and the drawn gutter takes the
-      // entered width. NOTE: until Intelligence carries explicit fields, the offset falls
-      // back to the existing-gutter overhang (+clearance) and the gutter width to 115mm.
-      const gutterWidthMm = 115;
-      const rafterOffsetMm = siteConstraints?.existingGutterOverhangMm ?? (gutterWidthMm + 50);
+      // Gutter clearance from the Site Intelligence "Existing gutter clearance" panel:
+      //   gutter overhang → existingGutterOverhangMm; frame stand-off (auto = overhang +
+      //   50mm clearance) → the `standoff` state. The rafter starts at the frame stand-off;
+      //   the drawn gutter takes the entered overhang as its projection.
+      const gutterWidthMm = siteConstraints?.existingGutterOverhangMm ?? 115;
+      const rafterOffsetMm = standoff;
+      // Infill droppers wired to the engineering gable-infill detail (panel + dropper layout).
+      const aSpanG = Math.max(0.5, config.width - 2 * (standoff / 1000));
+      const ghG = (aSpanG / 2) * Math.tan((config.pitch * Math.PI) / 180);
+      const giModel = calcGableInfill(aSpanG, ghG, config.pitch, selectedCladding, 0.5, calc.selBeam?.sec.d ?? 0, calc.selGableChord?.sec.d ?? 0);
+      const dropperSpacingMm = giModel.dropperSpacing * 1000;
       const baseModel = {
         spanMm: config.width * 1000,
         depthMm: config.depth * 1000,
@@ -1089,6 +1094,7 @@ export default function App() {
         plateOnColumn: forms.post === 'plate',
         rafterOffsetMm,
         gutterWidthMm,
+        dropperSpacingMm,
         ...(wall ? { wall } : {}),
       };
       for (let i = 0; i < nF; i++) {

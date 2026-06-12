@@ -11,7 +11,7 @@ export interface ElecNode { kind?: 'board' | 'switch' | 'light' | 'gpo'; lat: nu
 export interface Wire { from: LatLng; to: LatLng }
 export interface Downpipe { lat?: number; lng?: number; downpipe?: string | null; downpipeCapacityLs?: number; servesM2?: number; existingRoofM2?: number; shared?: boolean }
 export interface Catchment { polygon?: LatLng[]; shared?: boolean; dischargePoint?: number | null }
-export interface BomItem { qty: number; unit: string; desc: string; note?: boolean }
+export interface BomItem { qty: number; unit: string; desc: string; note?: boolean; consumable?: boolean }
 
 const FONT = "'DM Mono', ui-monospace, monospace";
 const R = 6371000;
@@ -49,7 +49,7 @@ export function buildPlumbingBOM(downpipes: Downpipe[]): { items: BomItem[]; new
     items.push({ qty: n * 2, unit: 'no', desc: 'Downpipe brackets / fixing clips' });
     items.push({ qty: n, unit: 'no', desc: 'Rainwater outlet ("pop") — gutter to downpipe' });
     items.push({ qty: n, unit: 'no', desc: 'Downpipe shoe / offset — ground connection' });
-    items.push({ qty: n, unit: 'm', desc: `uPVC stormwater pipe ${pvc} — to underground drain` });
+    items.push({ qty: n, unit: 'm', desc: `uPVC stormwater pipe ${pvc} — to underground drain`, consumable: true });
     items.push({ qty: n * 3, unit: 'no', desc: `uPVC ${pvc} fittings — bend, adaptor, drain connector` });
   }
   if (shared.length) {
@@ -89,11 +89,11 @@ export function buildElectricalBOM(nodes: ElecNode[], wires: Wire[]): { items: B
     const isPower = near(w.from, 'gpo') || near(w.to, 'gpo');
     if (isPower) powerLen += len; else lightLen += len;
   });
-  // Add vertical drops + 15% waste.
-  const lightingM = Math.ceil((lightLen + switches.length * 2.5 + lights.length * 0.5) * 1.15);
-  const powerM = Math.ceil((powerLen + gpos.length * 0.5) * 1.15);
-  if (lightingM > 0) items.push({ qty: lightingM, unit: 'm', desc: 'Cable — 1.5 mm² TPS (lighting)' });
-  if (powerM > 0) items.push({ qty: powerM, unit: 'm', desc: 'Cable — 2.5 mm² TPS (power / GPO)' });
+  // Base run lengths + vertical drops (wastage is added separately as a provisional allowance).
+  const lightingM = Math.ceil(lightLen + switches.length * 2.5 + lights.length * 0.5);
+  const powerM = Math.ceil(powerLen + gpos.length * 0.5);
+  if (lightingM > 0) items.push({ qty: lightingM, unit: 'm', desc: 'Cable — 1.5 mm² TPS (lighting)', consumable: true });
+  if (powerM > 0) items.push({ qty: powerM, unit: 'm', desc: 'Cable — 2.5 mm² TPS (power / GPO)', consumable: true });
 
   // Protection — one new circuit per service present.
   const circuits = (lights.length ? 1 : 0) + (gpos.length ? 1 : 0);
@@ -150,8 +150,8 @@ function northAndScale(parts: string[], plot: { x0: number; y0: number; x1: numb
   const sb = niceM * scale, sx = plot.x0 + 8, sy = plot.y1 - 12;
   parts.push(`<line x1="${sx}" y1="${sy}" x2="${(sx + sb).toFixed(1)}" y2="${sy}" stroke="#1a1a1a" stroke-width="2"/><line x1="${sx}" y1="${sy - 4}" x2="${sx}" y2="${sy + 4}" stroke="#1a1a1a" stroke-width="2"/><line x1="${(sx + sb).toFixed(1)}" y1="${sy - 4}" x2="${(sx + sb).toFixed(1)}" y2="${sy + 4}" stroke="#1a1a1a" stroke-width="2"/><text x="${(sx + sb / 2).toFixed(1)}" y="${sy - 8}" font-size="11" fill="#1a1a1a" text-anchor="middle">${niceM} m</text>`);
 }
-// Right-hand panel: a titled BOM table + a disclaimer footer.
-function bomPanel(parts: string[], title: string, items: BomItem[], accent: string, disclaimer: string[]) {
+// Right-hand panel: a titled BOM table + a provisional wastage line + a disclaimer footer.
+function bomPanel(parts: string[], title: string, items: BomItem[], accent: string, disclaimer: string[], wastagePct = 0, consumableLabel = 'consumables') {
   const lx = W - PANEL - 8;
   parts.push(`<line x1="${lx}" y1="${M}" x2="${lx}" y2="${H - M}" stroke="#ddd" stroke-width="1"/>`);
   let y = M + 8;
@@ -169,6 +169,17 @@ function bomPanel(parts: string[], title: string, items: BomItem[], accent: stri
     lines.forEach((ln, i) => parts.push(`<text x="${lx + 64}" y="${(y + i * 12).toFixed(1)}" font-size="10" fill="${it.note ? '#555' : '#1a1a1a'}">${esc(ln)}</text>`));
     y += Math.max(14, lines.length * 12 + 4);
   });
+  // Wastage — a PROVISIONAL allowance on the cut-to-length consumables, set in the app (adjustable).
+  if (wastagePct > 0) {
+    const consumableM = items.filter((it) => it.consumable && it.unit === 'm').reduce((s, it) => s + it.qty, 0);
+    const extra = Math.ceil(consumableM * wastagePct / 100);
+    parts.push(`<line x1="${lx + 14}" y1="${y - 2}" x2="${W - 14}" y2="${y - 2}" stroke="#e2e2e2" stroke-width="1"/>`);
+    y += 12;
+    parts.push(`<text x="${lx + 14}" y="${y}" font-size="10" fill="${accent}" font-family="${FONT}" font-weight="bold">+${wastagePct}%</text>`);
+    const wl = wrap(`Wastage allowance (provisional sum) — ≈ +${extra} m ${consumableLabel}. Adjust for installation method; a field call for the licensed tradesperson.`, 32);
+    wl.forEach((ln, i) => parts.push(`<text x="${lx + 64}" y="${(y + i * 12).toFixed(1)}" font-size="10" fill="#555">${esc(ln)}</text>`));
+    y += wl.length * 12 + 4;
+  }
   // Disclaimer footer.
   let dy = H - M - (disclaimer.length * 11) - 4;
   parts.push(`<line x1="${lx + 14}" y1="${dy - 10}" x2="${W - 14}" y2="${dy - 10}" stroke="#e2e2e2" stroke-width="1"/>`);
@@ -189,6 +200,7 @@ export interface StormwaterPlanInput {
   downpipes: Downpipe[];
   catchments?: Catchment[];
   designIntensityMmHr?: number;
+  wastagePct?: number;
 }
 export function generateStormwaterPlanSVG(input: StormwaterPlanInput): string {
   const { lotPts, footprint, downpipes, catchments } = input;
@@ -221,7 +233,7 @@ export function generateStormwaterPlanSVG(input: StormwaterPlanInput): string {
     'installed & certified by a LICENSED PLUMBER.',
     'Confirm legal point of discharge with council.',
   ];
-  bomPanel(parts, 'STORMWATER — BOM', bom.items, '#2bb6c9', disclaimer);
+  bomPanel(parts, 'STORMWATER — BOM', bom.items, '#2bb6c9', disclaimer, input.wastagePct ?? 0, 'uPVC pipe');
   parts.push(`</svg>`);
   return parts.join('');
 }
@@ -244,6 +256,7 @@ export interface ElectricalPlanInput {
   footprint?: LatLng[];
   nodes: ElecNode[];
   wires: Wire[];
+  wastagePct?: number;
 }
 export function generateElectricalPlanSVG(input: ElectricalPlanInput): string {
   const { lotPts, footprint, nodes, wires } = input;
@@ -270,7 +283,7 @@ export function generateElectricalPlanSVG(input: ElectricalPlanInput): string {
     'certified by a LICENSED ELECTRICIAN (CES/CCEW).',
     'Cable sizes/lengths to be confirmed on site.',
   ];
-  bomPanel(parts, 'ELECTRICAL — BOM', bom.items, '#d4a72c', disclaimer);
+  bomPanel(parts, 'ELECTRICAL — BOM', bom.items, '#d4a72c', disclaimer, input.wastagePct ?? 0, 'cable');
   parts.push(`</svg>`);
   return parts.join('');
 }

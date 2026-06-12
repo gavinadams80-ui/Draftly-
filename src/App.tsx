@@ -1015,6 +1015,9 @@ export default function App() {
 
   // ── Material take-off & cost ──
   const [ratePerKg, setRatePerKg] = useState(6.5);
+  // Provisional wastage allowances (%) on the services BOMs — adjustable; a field call for the trade.
+  const [elecWastePct, setElecWastePct] = useState(10);
+  const [plumbWastePct, setPlumbWastePct] = useState(10);
   const materialSchedule = useMemo(() => buildSchedule(config, calc, standoff, ratePerKg), [config, calc, standoff, ratePerKg]);
 
   // ── Submission drawing set — single source for the on-screen sheets and the PDF ──
@@ -1101,6 +1104,7 @@ export default function App() {
             downpipes: dps.map(d => ({ lat: d.lat, lng: d.lng, downpipe: d.label, downpipeCapacityLs: d.capacityLs, servesM2: d.servesM2, existingRoofM2: d.existingRoofM2, shared: d.shared })),
             catchments: siteConstraints.stormwater?.catchments,
             designIntensityMmHr: siteConstraints.stormwater?.designIntensityMmHr,
+            wastagePct: plumbWastePct,
           }),
         });
       }
@@ -1113,6 +1117,7 @@ export default function App() {
           build: () => generateElectricalPlanSVG({
             lotPts: baseCommon.lotPts, footprint: baseCommon.footprint,
             nodes: elNodes, wires: siteConstraints.electricalLayout?.wires ?? [],
+            wastagePct: elecWastePct,
           }),
         });
       }
@@ -1253,7 +1258,7 @@ export default function App() {
     });
 
     return sheets;
-  }, [config, standoff, leftSetback, rightSetback, calc, northRotation, titleBlock, siteConstraints, materialSchedule, ratePerKg, selectedCladding]);
+  }, [config, standoff, leftSetback, rightSetback, calc, northRotation, titleBlock, siteConstraints, materialSchedule, ratePerKg, selectedCladding, elecWastePct, plumbWastePct]);
 
   const handleExportPDF = useCallback(async () => {
     setIsExporting(true);
@@ -1899,6 +1904,24 @@ export default function App() {
                       value={northRotation}
                       onChange={(e) => setNorthRotation(parseFloat(e.target.value) || 0)}
                       title="Degrees clockwise from drawing up. 0 = north is up."
+                    />
+                  </div>
+                  <div className="dim-field">
+                    <label>Electrical BOM wastage (%)</label>
+                    <input
+                      type="number" step="1" min="0" max="50"
+                      value={elecWastePct}
+                      onChange={(e) => setElecWastePct(Math.max(0, parseFloat(e.target.value) || 0))}
+                      title="Provisional wastage allowance on cable/consumables — adjustable; a field call for the electrician."
+                    />
+                  </div>
+                  <div className="dim-field">
+                    <label>Plumbing BOM wastage (%)</label>
+                    <input
+                      type="number" step="1" min="0" max="50"
+                      value={plumbWastePct}
+                      onChange={(e) => setPlumbWastePct(Math.max(0, parseFloat(e.target.value) || 0))}
+                      title="Provisional wastage allowance on uPVC pipe/consumables — adjustable; a field call for the plumber."
                     />
                   </div>
                 </div>

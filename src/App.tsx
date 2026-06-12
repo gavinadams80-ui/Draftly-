@@ -1053,31 +1053,49 @@ export default function App() {
       });
     }
 
-    // ── Gable Frame — 1:1 model (real steel members) ──
-    // Section A-A and a projecting top view built from the actual selected sections, at
-    // true scale, with no page detail (that moves to the layout tab). Member sizes match
-    // the engineering pick: portal rafter/column (C + plate), gable chord + droppers.
+    // ── Frame models — 1:1, real members (one section per frame: A-A, B-B, C-C…) ──
+    // End frames are gable-end tied trusses (RHS infill: rafters + bottom-chord tie +
+    // droppers); interior frames are untied portal moment frames (C + plate rafters &
+    // columns, no tie/droppers). Each sheet has the roof plan projecting to its section.
+    // Member sizes track the engineering pick; no page detail (that moves to a layout tab).
     if (config.roofType === 'gable' && calc.selBeam?.sec && calc.selPost?.sec && calc.selGableChord?.sec && calc.selGableDropper?.sec) {
-      const model = generateGableFrameModelSVG({
+      const nF = config.portalFrameCount;
+      const gableRafter = calc.selGableTopChord?.sec ?? calc.selGableChord.sec;
+      const baseModel = {
         spanMm: config.width * 1000,
         depthMm: config.depth * 1000,
         pitchDeg: config.pitch,
         eaveHeightMm: config.height * 1000,
-        nFrames: config.portalFrameCount,
+        nFrames: nF,
         purlinSpacingMm: calc.purlinSpacing * 1000,
-        rafter: calc.selBeam.sec,
-        column: calc.selPost.sec,
-        chord: calc.selGableChord.sec,
-        dropper: calc.selGableDropper.sec,
+        column: calc.selPost.sec,            // building corner / portal columns
         purlin: calc.selPurlin?.sec,
-        plateOnRafter: forms.beam === 'plate',
         plateOnColumn: forms.post === 'plate',
-      });
-      sheets.push({
-        title: 'Gable Frame — 1:1 Model (Plan + Section A-A)', number: 'S-001b',
-        svg: withTitleBlock(model, titleBlock, 'Gable Frame — 1:1 Model', 'S-001b', 1, 1, '1:1'),
-        description: 'True-scale model of the gable frame from real steel members — rafters, bottom-chord tie, infill droppers and columns at their actual section depths, with a plate on the C open face. Top view projects to Section A-A. Member sizes match the engineering selection.',
-      });
+      };
+      for (let i = 0; i < nF; i++) {
+        const L = String.fromCharCode(65 + i);
+        const lab = `${L}-${L}`;
+        const isEnd = i === 0 || i === nF - 1;
+        const model = isEnd
+          ? generateGableFrameModelSVG({
+              ...baseModel, frameType: 'gable-end', label: lab, cutFrameIndex: i,
+              rafter: gableRafter, chord: calc.selGableChord!.sec, dropper: calc.selGableDropper!.sec,
+              plateOnRafter: forms.gableTopChord === 'plate',
+            })
+          : generateGableFrameModelSVG({
+              ...baseModel, frameType: 'portal', label: lab, cutFrameIndex: i,
+              rafter: calc.selBeam!.sec, plateOnRafter: forms.beam === 'plate',
+            });
+        const num = `S-001${String.fromCharCode(98 + i)}`; // b, c, d…
+        sheets.push({
+          title: `Frame Model — Section ${lab} (${isEnd ? 'Gable End · Infill' : 'Portal'})`,
+          number: num,
+          svg: withTitleBlock(model, titleBlock, `Frame Model — Section ${lab}`, num, i + 1, nF, '1:1'),
+          description: isEnd
+            ? `Gable end frame ${lab}: tied truss + infill at 1:1 — rafters, bottom-chord tie and droppers (RHS 100×50×3.0), on the building columns. Roof plan projects to the section.`
+            : `Intermediate portal frame ${lab}: untied moment frame at 1:1 — C+plate rafters and columns, no tie/droppers. Roof plan projects to the section.`,
+        });
+      }
     }
 
     sheets.push({

@@ -1031,9 +1031,9 @@ export default function App() {
         config.attachment, config.portalFrameCount, config.roofType === 'gable',
         standoff / 1000, leftSetback, rightSetback, calc.purlinSpacing, northRotation,
       );
-      // Same span as the existing Section A-A sheets (its canvas fits ~depth, not the
-      // full width — see the width-vs-depth note in the PR).
-      const sectionSpanMm = config.depth * 1000;
+      // The portal frame spans the building width (the clear span); the wall-section
+      // canvas now auto-fits wide spans (@draftly/drawings ≥ 0.12.0).
+      const sectionSpanMm = config.width * 1000;
       const sectionSvgRaw = generateWallSectionSVG(
         sectionSpanMm, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
@@ -1075,7 +1075,7 @@ export default function App() {
     sheets.push({
       title: 'Section A-A — Portal Frame 1 · Back (House Connection)', number: 'S-004',
       svg: withTitleBlock(generateWallSectionSVG(
-        config.depth * 1000, config.pitch,
+        config.width * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
         true, calc.selGableChord?.sec.d ?? 150, 'back', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
       ), titleBlock, 'Section A-A — PF1 Back (House Connection)', 'S-004', 1, 3, 'NTS'),
@@ -1084,7 +1084,7 @@ export default function App() {
     sheets.push({
       title: 'Section A-A — Portal Frame 2 · Intermediate (Middle)', number: 'S-005',
       svg: withTitleBlock(generateWallSectionSVG(
-        config.depth * 1000, config.pitch,
+        config.width * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
         false, 150, 'intermediate', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
       ), titleBlock, 'Section A-A — PF2 Intermediate', 'S-005', 2, 3, 'NTS'),
@@ -1093,7 +1093,7 @@ export default function App() {
     sheets.push({
       title: 'Section A-A — Portal Frame 3 · Front (Fascia End)', number: 'S-006',
       svg: withTitleBlock(generateWallSectionSVG(
-        config.depth * 1000, config.pitch,
+        config.width * 1000, config.pitch,
         calc.selPurlin?.sec.d ?? 100, calc.selPurlin?.sec.b ?? 50, calc.selPurlin?.sec.t ?? 1.5,
         true, calc.selGableChord?.sec.d ?? 150, 'front', calc.selPost?.sec.d ?? 100, config.roofType === 'gable', calc.selBeam?.sec.d ?? 250,
       ), titleBlock, 'Section A-A — PF3 Front (Fascia End)', 'S-006', 3, 3, 'NTS'),

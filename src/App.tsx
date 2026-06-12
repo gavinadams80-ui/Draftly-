@@ -35,6 +35,7 @@ import { checkAsDesigned, summarise } from '@/lib/compliance';
 import { buildChecklist, summariseChecklist, serializeChecklist, stageLabel, type ItemStatus } from '@/lib/checklist';
 import { normalizeOverlays, getOverlayGuidance, type NormalizedOverlay } from '@/lib/overlays';
 import { generateOverlaySitePlanSVG } from '@/lib/overlaySitePlan';
+import { generateStormwaterPlanSVG, generateElectricalPlanSVG } from '@/lib/servicesPlans';
 import type { ExportSheet } from '@/lib/exportPdf';
 import { downloadDesignSet } from '@/lib/designSetExport';
 import { readDesignSetForReview } from '@/lib/designSetReview';
@@ -275,12 +276,18 @@ interface SiteConstraints {
     notes?: string;
     downpipes?: {
       index?: number;
+      lat?: number;                  // downpipe position (for the drainage plan)
+      lng?: number;
       label?: string;
       capacityLs?: number;
       servesM2?: number;
       maxRoofM2?: number;            // max roof area this downpipe can take
+      existingRoofM2?: number;
       overCapacity?: boolean;        // this specific downpipe is over capacity
+      shared?: boolean;             // shares the existing dwelling downpipe (flashing only, no plumbing)
     }[];
+    // Roof catchment areas draining to each downpipe — drawn on the drainage plan.
+    catchments?: { polygon?: LatLng[]; shared?: boolean; dischargePoint?: number | null }[];
   };
   // Electrical / lighting scope carried from Intelligence → documented by Drafting,
   // designed/installed/certified by a licensed electrician (see docs).
@@ -301,6 +308,15 @@ interface SiteConstraints {
   // Planning overlays WITH geometry — the overlay polygon(s) intersecting the lot + a
   // partial-coverage flag, so the site plan shows exactly where each overlay sits on the block.
   overlayShapes?: { code?: string; name?: string; type?: string; partial?: boolean; rings?: LatLng[][] }[];
+  // Easements / no-build runs — drawn greyed on the site plan with a marker, so the inspector can
+  // see (and discuss) the registered constraints. `line` = a run; `polygon` = a closed no-build area.
+  easements?: { kind: 'line' | 'polygon'; label?: string; coords: LatLng[] }[];
+  // Electrical layout placed on the plan in Intelligence — fittings + the drawn wiring run. Drives
+  // the Engineering electrical-layout sheet + its indicative BOM.
+  electricalLayout?: {
+    nodes: { kind: 'board' | 'switch' | 'light' | 'gpo'; lat: number; lng: number; ip?: string; fixtureType?: string; area?: string }[];
+    wires: { from: LatLng; to: LatLng }[];
+  };
 }
 
 // Map Intelligence projectType strings → Engineering BuildingType enum
@@ -432,6 +448,24 @@ export default function App() {
       const connDetail = payload.boundaries?.attachmentDetail;
       const aerial = payload.boundaries?.site?.aerial;
 
+      // Easements — merge the auto-detected gov runs (research.easements.features, usually lines)
+      // with any user-traced no-build polygons (boundaries.easements). Both drawn greyed on the plan.
+      const easementList: { kind: 'line' | 'polygon'; label?: string; coords: LatLng[] }[] = [];
+      (payload.research?.easements?.features ?? []).forEach((f) => {
+        if (f.coords && f.coords.length >= 2) {
+          easementList.push({
+            kind: f.kind === 'polygon' ? 'polygon' : 'line',
+            label: f.label ?? (f.pfi ? `Easement ${f.pfi}` : 'Easement'),
+            coords: f.coords,
+          });
+        }
+      });
+      (payload.boundaries?.easements ?? []).forEach((e) => {
+        if (e.polygon && e.polygon.length >= 3) {
+          easementList.push({ kind: 'polygon', label: e.label ?? 'Easement', coords: e.polygon });
+        }
+      });
+
       // Pre-fill dimensions (validator already coerced to numbers)
       const patch: Partial<ProjectConfig> = {};
       const width = eps?.widthM ?? b.width;
@@ -508,12 +542,19 @@ export default function App() {
         notes: stormwater.notes,
         downpipes: (stormwater.dischargePoints ?? []).map(d => ({
           index: d.index,
+          lat: d.lat ?? undefined,
+          lng: d.lng ?? undefined,
           label: d.downpipe ?? undefined,
           capacityLs: d.downpipeCapacityLs,
           servesM2: d.servesM2,
           maxRoofM2: d.maxRoofM2,
+          existingRoofM2: d.existingRoofM2 ?? undefined,
           overCapacity: d.overCapacity,
+          shared: d.shared,
         })),
+        catchments: (stormwater.catchments ?? [])
+          .filter(c => c.polygon && c.polygon.length >= 3)
+          .map(c => ({ polygon: c.polygon, shared: c.shared, dischargePoint: c.dischargePoint })),
       } : undefined;
 
       // Electrical / lighting scope — carried through verbatim (lossless).
@@ -526,6 +567,22 @@ export default function App() {
         standardsNote: electrical.standardsNote,
         notes: electrical.notes,
       } : undefined;
+
+      // Electrical LAYOUT (tap-to-placed fittings + the drawn wiring run) → flatten the per-kind
+      // arrays into one tagged node list for the electrical-layout sheet + its BOM.
+      const el = electrical?.layout;
+      const elecLayout = el ? (() => {
+        const nodes: { kind: 'board' | 'switch' | 'light' | 'gpo'; lat: number; lng: number; ip?: string; fixtureType?: string; area?: string }[] = [];
+        const add = (kind: 'board' | 'switch' | 'light' | 'gpo', n?: { lat?: number; lng?: number; ip?: string; fixtureType?: string; area?: string } | null) => {
+          if (n && typeof n.lat === 'number' && typeof n.lng === 'number') nodes.push({ kind, lat: n.lat, lng: n.lng, ip: n.ip, fixtureType: n.fixtureType, area: n.area });
+        };
+        if (el.switchboard) add('board', el.switchboard);
+        (el.switches ?? []).forEach(n => add('switch', n));
+        (el.lights ?? []).forEach(n => add('light', n));
+        (el.gpos ?? []).forEach(n => add('gpo', n));
+        const wires = (el.wires ?? []).filter(w => w.from && w.to).map(w => ({ from: w.from as LatLng, to: w.to as LatLng }));
+        return nodes.length ? { nodes, wires } : undefined;
+      })() : undefined;
 
       // Store site constraints — offsets, Intelligence's compliance verdict, the
       // carried set-out (heights/standoff/overhang) and stormwater, all carried through.
@@ -551,6 +608,7 @@ export default function App() {
         sitedDepth: depth,
         stormwater: swSummary,
         electrical: elecSummary,
+        electricalLayout: elecLayout,
         ridgeBearing: typeof ridgeBearing === 'number' ? ridgeBearing : undefined,
         rotationDeg: typeof rotationDeg === 'number' ? rotationDeg : undefined,
         connectionSides: connDetail?.sides,
@@ -560,12 +618,33 @@ export default function App() {
         footprint: payload.boundaries?.building?.footprint,
         frontBoundaryIndex: payload.boundaries?.site?.frontBoundaryIndex,
         overlayShapes: payload.engineeringPackage?.site?.overlays ?? payload.boundaries?.overlayReview?.shapes,
+        easements: easementList.length ? easementList : undefined,
         importedCompliance: comp ? {
           approved: comp.approved,
           passCount: comp.passCount,
           totalChecks: compTotal,
         } : undefined,
       });
+
+      // GPS/aerial underlay only embeds in the exported PDF as a base64 data-URL — an external
+      // `url` can't be fetched during PDF generation, so a handoff that carried only the url shows
+      // on screen but prints blank. Backfill base64 from the url here (best-effort; CORS-permitting).
+      if (aerial?.url && !aerial.imageBase64) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            const cv = document.createElement('canvas');
+            cv.width = img.naturalWidth || 1024; cv.height = img.naturalHeight || 1024;
+            const ctx = cv.getContext('2d');
+            if (!ctx) return;
+            ctx.drawImage(img, 0, 0, cv.width, cv.height);
+            const dataUrl = cv.toDataURL('image/jpeg', 0.85); // throws if the canvas is CORS-tainted
+            setSiteConstraints((prev) => prev ? { ...prev, aerial: { ...prev.aerial, imageBase64: dataUrl } } : prev);
+          } catch { /* tainted canvas — leave the url-only aerial (screen still shows it) */ }
+        };
+        img.src = aerial.url;
+      }
 
       setActiveTab('structure');
     };
@@ -951,6 +1030,9 @@ export default function App() {
 
   // ── Material take-off & cost ──
   const [ratePerKg, setRatePerKg] = useState(6.5);
+  // Provisional wastage allowances (%) on the services BOMs — adjustable; a field call for the trade.
+  const [elecWastePct, setElecWastePct] = useState(10);
+  const [plumbWastePct, setPlumbWastePct] = useState(10);
   const materialSchedule = useMemo(() => buildSchedule(config, calc, standoff, ratePerKg), [config, calc, standoff, ratePerKg]);
 
   // ── Submission drawing set — single source for the on-screen sheets and the PDF ──
@@ -984,25 +1066,87 @@ export default function App() {
         });
       }
 
-      // Planning-overlays site plan — only when Intelligence carried overlay geometry. Shows each
-      // confirmed overlay clipped to the block, so partial (corner-clipping) coverage is explicit.
-      if (siteConstraints.overlayShapes && siteConstraints.overlayShapes.some((o) => o.rings && o.rings.length)) {
-        const ovSvg = generateOverlaySitePlanSVG({
-          lotPts: siteConstraints.lotPts,
-          overlays: siteConstraints.overlayShapes,
-          footprint: siteConstraints.footprint,
-          frontBoundaryIndex: siteConstraints.frontBoundaryIndex,
-          areaM2: siteConstraints.siteAreaM2,
-          council: siteConstraints.council,
+      // Site-context sheets (S-000a, b, c…): a comprehensive "Setbacks & Easements" plan (aerial
+      // underlay + greyed no-build setback zone + easements) for the inspector, then — because
+      // overlapping overlays muddy a single plan — one clean projection per overlay (plus an "all
+      // overlays" overview when there are 2+). Easements (no-build) carry onto every sheet.
+      const ovShapes = (siteConstraints.overlayShapes ?? []).filter((o) => o.rings && o.rings.length);
+      const eases = siteConstraints.easements;
+      const offs = siteConstraints.offsets;
+      const ab = siteConstraints.aerial;
+      const aerialB64 = (ab?.imageBase64 && ab.bbox && ab.bbox.length === 4)
+        ? { imageBase64: ab.imageBase64, bbox: ab.bbox as [number, number, number, number] } : undefined;
+      const hasOffsets = !!offs && [offs.front, offs.rear, offs.left, offs.right].some((v) => typeof v === 'number' && v > 0);
+      const baseCommon = {
+        lotPts: siteConstraints.lotPts,
+        footprint: siteConstraints.footprint,
+        frontBoundaryIndex: siteConstraints.frontBoundaryIndex,
+        areaM2: siteConstraints.siteAreaM2,
+        council: siteConstraints.council,
+      };
+
+      const ctxSheets: { title: string; description: string; build: () => string }[] = [];
+      if ((eases && eases.length) || aerialB64 || hasOffsets) {
+        ctxSheets.push({
+          title: 'Site Plan — Setbacks & Easements',
+          description: 'GPS/aerial context of the block with the proposed structure, the greyed no-build setback zone (from the measured offsets) and any registered easements marked. Indicative — confirm offsets with a surveyor and easements on title before lodging.',
+          build: () => generateOverlaySitePlanSVG({ ...baseCommon, easements: eases, offsets: offs, aerial: aerialB64, legendTitle: 'SITE — SETBACKS & EASEMENTS' }),
         });
-        if (ovSvg) {
-          sheets.push({
-            title: 'Site Plan — Planning Overlays', number: 'S-000a',
-            svg: withTitleBlock(ovSvg, titleBlock, 'Site Plan — Planning Overlays', 'S-000a', 1, 1, 'NTS'),
-            description: 'Confirmed planning overlays mapped onto the block, clipped to the lot boundary. Overlays flagged where they cover only part of the lot. Extents are indicative — confirm on the planning portal.',
-          });
-        }
       }
+      if (ovShapes.length > 1) {
+        ctxSheets.push({
+          title: 'Site Plan — All Overlays',
+          description: 'All confirmed planning overlays on one plan (overview) — see the per-overlay sheets for each shown clearly. Clipped to the lot boundary; indicative extent.',
+          build: () => generateOverlaySitePlanSVG({ ...baseCommon, overlays: ovShapes, easements: eases }),
+        });
+      }
+      ovShapes.forEach((o) => {
+        ctxSheets.push({
+          title: `Site Plan — ${o.code || o.name || 'Overlay'}`,
+          description: `${o.name || o.code || 'Overlay'} mapped onto the block, clipped to the lot boundary — ${o.partial ? 'covers only PART of the lot' : 'covers the whole lot'}. Indicative extent; confirm on the planning portal.`,
+          build: () => generateOverlaySitePlanSVG({ ...baseCommon, overlays: [o], easements: eases }),
+        });
+      });
+
+      // Stormwater / drainage plan + plumbing BOM — when downpipes were placed in Intelligence.
+      const dps = (siteConstraints.stormwater?.downpipes ?? []).filter(d => typeof d.lat === 'number' && typeof d.lng === 'number');
+      if (dps.length) {
+        ctxSheets.push({
+          title: 'Stormwater / Drainage Plan',
+          description: 'Downpipe positions + roof catchments on the block with an indicative plumbing bill of materials. Roof/stormwater plumbing to AS/NZS 3500.3 — installed & certified by a licensed plumber. Confirm the legal point of discharge.',
+          build: () => generateStormwaterPlanSVG({
+            lotPts: baseCommon.lotPts, footprint: baseCommon.footprint,
+            downpipes: dps.map(d => ({ lat: d.lat, lng: d.lng, downpipe: d.label, downpipeCapacityLs: d.capacityLs, servesM2: d.servesM2, existingRoofM2: d.existingRoofM2, shared: d.shared })),
+            catchments: siteConstraints.stormwater?.catchments,
+            designIntensityMmHr: siteConstraints.stormwater?.designIntensityMmHr,
+            wastagePct: plumbWastePct,
+          }),
+        });
+      }
+      // Electrical layout + BOM — when fittings were placed in Intelligence.
+      const elNodes = siteConstraints.electricalLayout?.nodes ?? [];
+      if (elNodes.length) {
+        ctxSheets.push({
+          title: 'Electrical Layout',
+          description: 'Light fittings, switches, GPOs and the wiring run on the block with an indicative electrical bill of materials. All electrical work to AS/NZS 3000 — installed & certified by a licensed electrician.',
+          build: () => generateElectricalPlanSVG({
+            lotPts: baseCommon.lotPts, footprint: baseCommon.footprint,
+            nodes: elNodes, wires: siteConstraints.electricalLayout?.wires ?? [],
+            wastagePct: elecWastePct,
+          }),
+        });
+      }
+
+      ctxSheets.forEach((c, i) => {
+        const svg = c.build();
+        if (!svg) return;
+        const num = `S-000${String.fromCharCode(97 + i)}`; // S-000a, S-000b, …
+        sheets.push({
+          title: c.title, number: num,
+          svg: withTitleBlock(svg, titleBlock, c.title, num, 1, 1, 'NTS'),
+          description: c.description,
+        });
+      });
     }
 
     const planDesc =
@@ -1174,7 +1318,7 @@ export default function App() {
     });
 
     return sheets;
-  }, [config, standoff, leftSetback, rightSetback, calc, northRotation, titleBlock, siteConstraints, materialSchedule, ratePerKg, selectedCladding]);
+  }, [config, standoff, leftSetback, rightSetback, calc, northRotation, titleBlock, siteConstraints, materialSchedule, ratePerKg, selectedCladding, elecWastePct, plumbWastePct]);
 
   const handleExportPDF = useCallback(async () => {
     setIsExporting(true);
@@ -1839,6 +1983,24 @@ export default function App() {
                       value={northRotation}
                       onChange={(e) => setNorthRotation(parseFloat(e.target.value) || 0)}
                       title="Degrees clockwise from drawing up. 0 = north is up."
+                    />
+                  </div>
+                  <div className="dim-field">
+                    <label>Electrical BOM wastage (%)</label>
+                    <input
+                      type="number" step="1" min="0" max="50"
+                      value={elecWastePct}
+                      onChange={(e) => setElecWastePct(Math.max(0, parseFloat(e.target.value) || 0))}
+                      title="Provisional wastage allowance on cable/consumables — adjustable; a field call for the electrician."
+                    />
+                  </div>
+                  <div className="dim-field">
+                    <label>Plumbing BOM wastage (%)</label>
+                    <input
+                      type="number" step="1" min="0" max="50"
+                      value={plumbWastePct}
+                      onChange={(e) => setPlumbWastePct(Math.max(0, parseFloat(e.target.value) || 0))}
+                      title="Provisional wastage allowance on uPVC pipe/consumables — adjustable; a field call for the plumber."
                     />
                   </div>
                 </div>

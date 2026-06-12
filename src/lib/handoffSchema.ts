@@ -77,6 +77,22 @@ const OverlayShapeSchema = z.object({
 }).partial();
 export type HandoffOverlayShape = z.infer<typeof OverlayShapeSchema>;
 
+// Easements / no-build runs carried from the siting tool. Two sources: auto-detected from the
+// authoritative gov easement layer (`research.easements.features`, usually line runs with `coords`)
+// and user-traced polygons (`boundaries.easements`, closed `polygon`s). Both drawn greyed on the plan.
+const EasementFeatureSchema = z.object({
+  kind: z.string().optional(),                 // 'line' | 'polygon'
+  pfi: z.string().nullable().optional(),
+  label: z.string().nullable().optional(),
+  coords: z.array(LatLngSchema).optional(),
+}).partial();
+const EasementPolygonSchema = z.object({
+  index: z.number().optional(),
+  label: z.string().nullable().optional(),
+  polygon: z.array(LatLngSchema).optional(),
+  areaM2: z.number().nullable().optional(),
+}).partial();
+
 // Stormwater set-out the siting tool computes — design rainfall + the downpipes
 // and the catchment they each serve. Carried so Drafting can build the drainage
 // sheet instead of re-deriving it. Catchment polygons are intentionally left out
@@ -90,17 +106,36 @@ const StormwaterSchema = z.object({
   }).partial().optional(),
   dischargePoints: z.array(z.object({
     index: z.number().optional(),
-    downpipe: z.string().nullable().optional(),
+    lat: numish, lng: numish,                    // downpipe position on the building edge
+    downpipe: z.string().nullable().optional(),  // chosen type label, e.g. "Round 100 mm"
     downpipeCapacityLs: numish,
     servesM2: numish,
     maxRoofM2: numish,
+    existingRoofM2: numish,
     overCapacity: z.boolean().optional(),
+    shared: z.boolean().optional(),              // true = shares the existing dwelling downpipe (flashing only)
+  }).partial()).optional(),
+  catchments: z.array(z.object({                 // roof areas draining to each downpipe (for the plan)
+    section: z.number().optional(),
+    areaM2: numish,
+    polygon: z.array(LatLngSchema).optional(),
+    dischargePoint: z.number().nullable().optional(),  // 1-based index into dischargePoints
+    shared: z.boolean().optional(),
   }).partial()).optional(),
   totalCatchmentAreaM2: numish,
   anyOverCapacity: z.boolean().optional(),
   notes: z.string().optional(),
 }).partial();
 export type HandoffStormwater = z.infer<typeof StormwaterSchema>;
+
+// A placed electrical item on the plan (board / switch / light / GPO).
+const ElecNodeSchema = z.object({
+  lat: numish, lng: numish,
+  ip: z.string().optional(),
+  fixtureType: z.string().optional(),
+  area: z.string().optional(),
+  label: z.string().optional(),
+}).partial();
 
 // Electrical / lighting scope captured in Intelligence. Draftly documents and
 // coordinates this; a LICENSED ELECTRICIAN designs, installs and certifies it
@@ -128,6 +163,15 @@ const ElectricalSchema = z.object({
   lightSpillConstraint: z.boolean().optional(),  // AS 4282 / overlay-driven
   standardsNote: z.string().optional(),
   notes: z.string().optional(),
+  // Tap-to-place layout from the siting tool — positions + the drawn wiring run. Drawn on the
+  // Engineering electrical-layout sheet; the BOM (cable/fixings/etc.) is derived from it.
+  layout: z.object({
+    switchboard: ElecNodeSchema.nullable().optional(),
+    switches: z.array(ElecNodeSchema).optional(),
+    lights: z.array(ElecNodeSchema).optional(),
+    gpos: z.array(ElecNodeSchema).optional(),
+    wires: z.array(z.object({ from: LatLngSchema, to: LatLngSchema }).partial()).optional(),
+  }).partial().optional(),
 }).partial();
 export type HandoffElectrical = z.infer<typeof ElectricalSchema>;
 
@@ -179,6 +223,10 @@ export const HandoffSchema = z.object({
     setbacks: SetbacksSchema.optional(),  // required planning setbacks
     setbacks_estimated: z.boolean().optional(),  // true = estimated (Reg 79/doc), not gov-verified → provisional
     overlays: z.array(OverlaySchema).optional(),
+    easements: z.object({                       // auto-detected gov easement runs (Vicmap etc.)
+      source: z.string().optional(),
+      features: z.array(EasementFeatureSchema).optional(),
+    }).partial().nullable().optional(),
     confidence: z.string().optional(),
     source_url: z.string().optional(),
     notes: z.string().optional(),
@@ -229,6 +277,7 @@ export const HandoffSchema = z.object({
     }).partial().optional(),
     stormwater: StormwaterSchema.optional(),  // downpipes + catchment sizing from the siting tool
     electrical: ElectricalSchema.optional(),  // lighting/electrical scope (executed + certified by a licensed electrician)
+    easements: z.array(EasementPolygonSchema).nullable().optional(),  // user-traced no-build polygons
     // Planning overlays the user confirmed, WITH geometry — for the site-plan overlay sheet.
     overlayReview: z.object({
       confirmed: z.array(z.string()).optional(),

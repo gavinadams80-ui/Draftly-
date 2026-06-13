@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, Fragment } from 'react';
+import { useState, useMemo, useCallback, useEffect, Fragment } from 'react';
 import type {
   ProjectConfig, MemberForms, MemberOverrides, MemberForm,
   ConstructionType, BuildingType, RoofType, AttachmentType,
@@ -40,6 +40,7 @@ import type { ExportSheet } from '@/lib/exportPdf';
 import { downloadDesignSet } from '@/lib/designSetExport';
 import { readDesignSetForReview } from '@/lib/designSetReview';
 import { STRUCTURAL_PRESETS } from '@/lib/presets';
+import { loadAutosave, saveAutosaveDebounced, clearAutosave } from '@/lib/autosave';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -397,22 +398,59 @@ function buildSchedule(
 }
 
 // ── Main App ──
+// The design INPUTS the session autosave persists (everything derivable —
+// calc results, sheets — is recomputed from these on restore). The aerial
+// underlay base64 is stripped before saving to stay inside localStorage quota.
+interface AutosaveState {
+  config: ProjectConfig;
+  forms: MemberForms;
+  overrides: MemberOverrides;
+  selectedProfile: string;
+  selectedCladding: string;
+  standoff: number;
+  diaphragmDetail: DiaphragmDetail;
+  leftSetback: number;
+  rightSetback: number;
+  titleBlock: TitleBlockData;
+  siteConstraints: SiteConstraints | null;
+  northRotation: number;
+}
+
 export default function App() {
-  const [config, setConfig] = useState<ProjectConfig>(DEFAULT_CONFIG);
-  const [forms, setForms] = useState<MemberForms>(DEFAULT_FORMS);
-  const [overrides, setOverrides] = useState<MemberOverrides>(DEFAULT_OVERRIDES);
-  const [selectedProfile, setSelectedProfile] = useState('trimdek-42');
+  // Session autosave: read once on mount; state initializers below prefer the
+  // restored values so a closed/refreshed tab no longer destroys the design.
+  const [restored] = useState(() => loadAutosave<AutosaveState>());
+  const [showRestoreNote, setShowRestoreNote] = useState(!!restored);
+  const rs = restored?.state;
+
+  const [config, setConfig] = useState<ProjectConfig>(rs?.config ?? DEFAULT_CONFIG);
+  const [forms, setForms] = useState<MemberForms>(rs?.forms ?? DEFAULT_FORMS);
+  const [overrides, setOverrides] = useState<MemberOverrides>(rs?.overrides ?? DEFAULT_OVERRIDES);
+  const [selectedProfile, setSelectedProfile] = useState(rs?.selectedProfile ?? 'trimdek-42');
   const [showAllPassing, setShowAllPassing] = useState(false);
   const [activeTab, setActiveTab] = useState('structure');
-  const [selectedCladding, setSelectedCladding] = useState('poly-twin-10');
-  const [standoff, setStandoff] = useState(150);        // mm — standoff from house fascia
-  const [diaphragmDetail, setDiaphragmDetail] = useState<DiaphragmDetail>('timber-battened'); // ply ceiling shear-transfer detail
+  const [selectedCladding, setSelectedCladding] = useState(rs?.selectedCladding ?? 'poly-twin-10');
+  const [standoff, setStandoff] = useState(rs?.standoff ?? 150); // mm — standoff from house fascia
+  const [diaphragmDetail, setDiaphragmDetail] = useState<DiaphragmDetail>(rs?.diaphragmDetail ?? 'timber-battened'); // ply ceiling shear-transfer detail
   const [carriedReadiness, setCarriedReadiness] = useState<{ id: string; status: ItemStatus }[] | undefined>(undefined); // Drafting/cert ticks from a handback
-  const [leftSetback, setLeftSetback] = useState(0);    // m — right-side wall stops this far from front (0 = full depth)
-  const [rightSetback, setRightSetback] = useState(1.8); // m — right-side wall stops this far from front
-  const [titleBlock, setTitleBlock] = useState<TitleBlockData>(DEFAULT_TITLE_BLOCK);
-  const [siteConstraints, setSiteConstraints] = useState<SiteConstraints | null>(null);
-  const [northRotation, setNorthRotation] = useState(0); // degrees clockwise, 0 = north up
+  const [leftSetback, setLeftSetback] = useState(rs?.leftSetback ?? 0);    // m — right-side wall stops this far from front (0 = full depth)
+  const [rightSetback, setRightSetback] = useState(rs?.rightSetback ?? 1.8); // m — right-side wall stops this far from front
+  const [titleBlock, setTitleBlock] = useState<TitleBlockData>(rs?.titleBlock ?? DEFAULT_TITLE_BLOCK);
+  const [siteConstraints, setSiteConstraints] = useState<SiteConstraints | null>(rs?.siteConstraints ?? null);
+  const [northRotation, setNorthRotation] = useState(rs?.northRotation ?? 0); // degrees clockwise, 0 = north up
+
+  // Persist the design inputs (debounced) on every change. The aerial underlay
+  // base64 is dropped — it can be megabytes and is re-importable from the site file.
+  useEffect(() => {
+    const sc = siteConstraints?.aerial?.imageBase64
+      ? { ...siteConstraints, aerial: { ...siteConstraints.aerial, imageBase64: undefined } }
+      : siteConstraints;
+    saveAutosaveDebounced<AutosaveState>({
+      config, forms, overrides, selectedProfile, selectedCladding, standoff,
+      diaphragmDetail, leftSetback, rightSetback, titleBlock, siteConstraints: sc, northRotation,
+    });
+  }, [config, forms, overrides, selectedProfile, selectedCladding, standoff,
+      diaphragmDetail, leftSetback, rightSetback, titleBlock, siteConstraints, northRotation]);
   const updateTB = useCallback((patch: Partial<TitleBlockData>) =>
     setTitleBlock(prev => ({ ...prev, ...patch })), []);
 
@@ -1481,6 +1519,30 @@ export default function App() {
 
   return (
     <div className="app-container">
+      {showRestoreNote && restored && (
+        <div style={{
+          position: 'fixed', top: 10, right: 10, zIndex: 2000,
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
+          padding: '6px 10px', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-muted)',
+          boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+        }}>
+          <span>↻ Design restored from autosave ({new Date(restored.savedAt).toLocaleString()})</span>
+          <button
+            onClick={() => { clearAutosave(); window.location.reload(); }}
+            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-muted)', padding: '2px 8px', cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 11 }}
+          >
+            Start fresh
+          </button>
+          <button
+            onClick={() => setShowRestoreNote(false)}
+            aria-label="Dismiss"
+            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}
+          >
+            ×
+          </button>
+        </div>
+      )}
       {/* ── HEADER ── */}
       <header className="app-header">
         <div className="header-left">

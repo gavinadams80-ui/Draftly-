@@ -56,6 +56,16 @@ auto-delete-on-merge enabled repo-wide. Drafting now renders the SAME model on D
 ⚠️ npm gotcha: npm cached a stale resolution for an earlier transient `v0.12.0` ref — if an install
 shows 0.11.0, run `npm update @draftly/drawings` (cache clean does NOT fix it).
 
+**Session autosave (2026-06-13, PR #21):** the app had NO persistence — closing/refreshing the tab
+silently destroyed the design (this nearly lost real work twice). Now `src/lib/autosave.ts` +
+wiring in `App.tsx` debounce-saves the design INPUTS (config, forms, overrides, profile/cladding,
+standoff, setbacks, diaphragm detail, title block, site constraints, north rotation) to
+localStorage key `draftly-eng.autosave.v1` on every change, and restores them on next load via a
+"↻ Design restored from autosave" banner with a **Start fresh** button. The aerial underlay base64
+is STRIPPED before saving (quota). Verified live: write-on-load (12 keys) + restore + Start-fresh.
+A duplicate impl from a parallel session (PR #20, branch `claude/frosty-proskuriakova`) was CLOSED
+unmerged — this (#21) is the one on main; bump the key version if the saved shape changes.
+
 ## Commands
 
 ```bash

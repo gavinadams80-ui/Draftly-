@@ -2,6 +2,28 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⭐ Latest handover — Branding + cross-app pipeline strip (2026-06-14)
+- **NOT yet on `main`.** Branch `claude/site-upgrades-u6146r`, **draft PR #22** (CI green + Vercel
+  deploy success, `mergeable_state: clean`). Companion work in Drafting (`Draftly-Drafting` PR #46)
+  — review/merge the two together. (User's "site upgrades" meant *branding + the app-to-app
+  walk-through*, NOT the engineering site-plan sheets.)
+- **Shared brand module** `src/components/brand/DraftlyBrand.tsx` (self-contained; duplicated in
+  Drafting — the apps share `@draftly/drawings` but no React UI layer):
+  - `DraftlyMark` — crisp flat purple `#863bff` Draftly glyph (favicon path, gradient, no blur).
+  - `DraftlyLogo` — mark + "Draftly" wordmark + tagline; reuses the existing `.logo-mark` /
+    `.logo-name` / `.logo-tagline` CSS (the old `.logo-icon` gold square is now unused — left in CSS).
+  - `PipelineStrip` — Site Intelligence → Engineering → Drafting → Certification; current stage
+    gold-highlighted.
+- **Header** (App.tsx ~1549): generic gold hexagon icon → the real Draftly mark; added
+  `PipelineStrip current="engineering"` with the Drafting chip wired to `handleExportDesignSet`
+  (hand the DesignSet over).
+- **Favicon** — Eng had NONE; added `public/favicon.svg` (same mark as Drafting) + `<link>` in
+  `index.html`; title is now `Draftly · Structural Designer`.
+- **Brand decision** (user had no preference): purple mark = logo glyph; gold `#c9a84c` stays the
+  UI/drawing accent.
+- **LEFT TO DO:** (a) **cross-app URL launch links** from the pipeline stages once deployed URLs
+  are known. (b) merge PR #22 + Drafting PR #46 to `main` together (both still draft).
+
 ## ⭐ Session handover — Engineering presets + 1:1 gable-frame model (2026-06-12)
 
 Branch `claude/engineering-presets-pdf-enak5m`, merged to `main`. Spanned two repos:

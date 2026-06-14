@@ -1,3 +1,12 @@
+> # ⛔ DEPRECATED — do not develop here
+>
+> **This app has moved into the [`Draftly-HQ`](https://github.com/gavinadams80-ui/Draftly-HQ) monorepo.**
+> All active Draftly development now happens in `Draftly-HQ` (Engineering + Drafting apps over the
+> shared `@draftly/*` packages). This standalone repo is kept for history only and is being archived
+> — **do not open PRs, push commits, or point a Claude Code session here.**
+
+---
+
 # Draftly Structural Designer
 
 A structural engineering tool for outdoor structures (pergolas, carports, verandahs, sheds) built for builders, renovators, and developers who need council-ready drawings.

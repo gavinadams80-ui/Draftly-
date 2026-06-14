@@ -1,5 +1,14 @@
 # CLAUDE.md
 
+> ## ⛔ ARCHIVED — this repo is superseded by the `Draftly-HQ` monorepo
+> Do **not** develop here. All active work (Engineering + Drafting + shared `@draftly/*` packages)
+> lives in **[`gavinadams80-ui/Draftly-HQ`](https://github.com/gavinadams80-ui/Draftly-HQ)**.
+> If a session opened this repo by mistake, stop and switch to `Draftly-HQ`. The notes below are
+> retained for history only.
+>
+> ⚠️ Known gap: the 2026-06-14 branding work (Draftly logo + cross-app pipeline strip, PR #22)
+> landed HERE, not in the monorepo — it still needs porting into `Draftly-HQ`.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## ⭐ Latest handover — Branding + cross-app pipeline strip (2026-06-14)

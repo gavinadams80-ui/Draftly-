@@ -41,6 +41,7 @@ import { downloadDesignSet } from '@/lib/designSetExport';
 import { readDesignSetForReview } from '@/lib/designSetReview';
 import { STRUCTURAL_PRESETS } from '@/lib/presets';
 import { loadAutosave, saveAutosaveDebounced, clearAutosave } from '@/lib/autosave';
+import { DraftlyLogo, PipelineStrip } from '@/components/brand/DraftlyBrand';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -1546,15 +1547,13 @@ export default function App() {
       {/* ── HEADER ── */}
       <header className="app-header">
         <div className="header-left">
-          <div className="logo-mark">
-            <div className="logo-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111210" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/>
-              </svg>
-            </div>
-            <span className="logo-name">Draftly</span>
-          </div>
-          <span className="logo-tagline">Structural Designer</span>
+          <DraftlyLogo tagline="Structural Designer" />
+          <PipelineStrip
+            current="engineering"
+            actions={{
+              drafting: { label: 'Hand the design over to Drafting (.designset.json)', onClick: () => { handleExportDesignSet(); } },
+            }}
+          />
         </div>
         <div className="header-right">
           <Badge variant="outline" style={{ fontFamily: 'var(--mono)', fontSize: '10px', letterSpacing: '0.06em' }}>
